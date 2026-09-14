@@ -294,4 +294,16 @@ export default [
     component: './exception/404',
     path: '/*',
   },
+  {
+    path: '/drug-transfer',
+    name: '出入库管理',
+    icon: 'swap', // 菜单图标，字符串会自动映射到 antd 图标
+    component: './DrugTransfer', // 对应 src/pages/DrugTransfer/index.tsx
+  },
+  {
+    path: '/dept',
+    name: '部门管理',
+    icon: 'team',
+    component: './Dept',
+  },
 ];
