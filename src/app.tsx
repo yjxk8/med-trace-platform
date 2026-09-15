@@ -1,177 +1,258 @@
-import { LinkOutlined } from '@ant-design/icons';
-import type { Settings as LayoutSettings } from '@ant-design/pro-components';
-import { SettingDrawer } from '@ant-design/pro-components';
+// src/app.tsx
+
+import { BellOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons';
 import type { RequestConfig, RunTimeLayoutConfig } from '@umijs/max';
-import { history, Link } from '@umijs/max';
+import { history } from '@umijs/max';
+import { Avatar, Badge, Dropdown } from 'antd';
 import dayjs from 'dayjs';
-import relativeTime from 'dayjs/plugin/relativeTime';
-import React from 'react';
+import { useEffect, useState } from 'react';
+import GlobalBreadcrumb from '@/components/GlobalBreadcrumb';
+import GlobalTabs, { TABS_STORAGE_KEY } from '@/components/GlobalTabs';
+import type { CurrentUser } from '@/services/auth';
+import { fetchCurrentUser, logout as logoutApi } from '@/services/auth';
+import { withIcons } from '@/utils/icon';
 
-// Initialize dayjs plugins globally
-dayjs.extend(relativeTime);
-
-import {
-  AvatarDropdown,
-  DocLink,
-  ErrorBoundary,
-  Footer,
-  LangDropdown,
-  OfflineBanner,
-  VersionDropdown,
-} from '@/components';
-import { currentUser as queryCurrentUser } from '@/services/ant-design-pro/api';
-import defaultSettings from '../config/defaultSettings';
-import { errorConfig } from './requestErrorConfig';
-
-const isDev = process.env.NODE_ENV === 'development';
-const loginPath = '/user/login';
-
-/**
- * @see https://umijs.org/docs/api/runtime-config#getinitialstate
- * */
-export async function getInitialState(): Promise<{
-  settings?: Partial<LayoutSettings>;
-  currentUser?: API.CurrentUser;
-  loading?: boolean;
-  fetchUserInfo?: () => Promise<API.CurrentUser | undefined>;
-  settingDrawerOpen?: boolean;
-}> {
-  return {
-    settings: defaultSettings as Partial<LayoutSettings>,
-    currentUser: {
-      name: '测试用户',
-      userid: '1',
-    } as API.CurrentUser,
-  };
+export interface InitialState {
+  token?: string;
+  currentUser?: CurrentUser;
 }
 
-// ProLayout 支持的api https://procomponents.ant.design/components/layout
-export const layout: RunTimeLayoutConfig = ({
-  initialState,
-  setInitialState,
-}) => {
-  return {
-    menuItemRender: (item, dom) => {
-      if (item.path) {
-        return (
-          <Link to={item.path} prefetch>
-            {dom}
-          </Link>
-        );
+const onLoginPage = () => history.location.pathname.startsWith('/login');
+
+/**
+ * 字段取值：后端确认用户名在 uName 字段。
+ * 同时兼容用户信息被包在 user / data 一层里的响应结构：
+ * 顶层取不到时自动下探一层，避免显示兜底文案「用户」。
+ */
+const pick = (u: any, ...keys: string[]): any => {
+  if (!u) return undefined;
+  for (const k of keys) {
+    if (u[k]) return u[k];
+    if (u.user?.[k]) return u.user[k];
+    if (u.data?.[k]) return u.data[k];
+  }
+  return undefined;
+};
+
+const displayName = (u: any): string =>
+  pick(u, 'uName', 'uAccount', 'userName', 'account', 'name') || '用户';
+const displayRole = (u: any): string =>
+  pick(u, 'uRole', 'roleName', 'role', 'roleNames') || '系统管理';
+
+/** 启动时恢复登录态 */
+export async function getInitialState(): Promise<InitialState> {
+  const token = localStorage.getItem('token') || undefined;
+  if (!token) {
+    if (!onLoginPage()) history.replace('/login');
+    return {};
+  }
+  try {
+    const currentUser = await fetchCurrentUser(token);
+    if (!currentUser) {
+      localStorage.removeItem('token');
+      if (!onLoginPage()) history.replace('/login');
+      return {};
+    }
+    return { token, currentUser };
+  } catch {
+    localStorage.removeItem('token');
+    if (!onLoginPage()) history.replace('/login');
+    return {};
+  }
+}
+
+/** 全局请求配置：带 token 请求头 + 401 兜底 */
+export const request: RequestConfig = {
+  requestInterceptors: [
+    (url: string, options: any) => {
+      const token = localStorage.getItem('token');
+      if (token)
+        options.headers = {
+          ...options.headers,
+          Authorization: `Bearer ${token}`,
+        };
+      return { url, options };
+    },
+  ],
+  errorConfig: {
+    errorHandler: (error: any) => {
+      const status = Number(error?.response?.status ?? error?.status);
+      if (status === 401) {
+        localStorage.removeItem('token');
+        if (!onLoginPage()) history.replace('/login');
       }
-      return dom;
     },
-    actionsRender: () => {
-      // `locale: false` opts out of the language switcher. ProLayout's own
-      // `locale` prop is a locale string, so narrow to the boolean toggle here.
-      const localeEnabled =
-        (initialState?.settings as { locale?: boolean })?.locale !== false;
-      return [
-        <DocLink key="doc" />,
-        <VersionDropdown key="version" />,
-        localeEnabled && <LangDropdown key="lang" />,
-      ].filter(Boolean);
-    },
-    avatarProps: {
-      src: initialState?.currentUser?.avatar,
-      title: 'ProUser',
-      render: (_, avatarChildren) => (
-        <AvatarDropdown>{avatarChildren}</AvatarDropdown>
-      ),
-    },
-    // waterMarkProps: {
-    //   content: initialState?.currentUser?.name,
-    // },
-    footerRender: () => <Footer />,
-    onPageChange: () => {
-      const { location } = history;
-      // 如果没有登录，重定向到 login
-      if (!initialState?.currentUser && location.pathname !== loginPath) {
-        history.replace(
-          `${loginPath}?redirect=${encodeURIComponent(location.pathname + location.search + location.hash)}`,
-        );
-      }
-    },
-    bgLayoutImgList: [
-      {
-        src: 'https://mdn.alipayobjects.com/yuyan_qk0oxh/afts/img/D2LWSqNny4sAAAAAAAAAAAAAFl94AQBr',
-        left: 85,
-        bottom: 100,
-        height: '303px',
-      },
-      {
-        src: 'https://mdn.alipayobjects.com/yuyan_qk0oxh/afts/img/C2TWRpJpiC0AAAAAAAAAAAAAFl94AQBr',
-        bottom: -68,
-        right: -45,
-        height: '303px',
-      },
-      {
-        src: 'https://mdn.alipayobjects.com/yuyan_qk0oxh/afts/img/F6vSTbj8KpYAAAAAAAAAAAAAFl94AQBr',
-        bottom: 0,
-        left: 0,
-        width: '331px',
-      },
-    ],
-    links: isDev
-      ? [
-          <Link key="openapi" to="/umi/plugin/openapi" target="_blank">
-            <LinkOutlined />
-            <span>OpenAPI 文档</span>
-          </Link>,
-        ]
-      : [],
-    // Replace ProLayout's default ErrorBoundary with our offline-aware version,
-    // so chunk load errors show friendly messages instead of "Something went wrong."
-    ErrorBoundary,
-    menuHeaderRender: undefined,
-    // 自定义 403 页面
-    // unAccessible: <div>unAccessible</div>,
-    // 增加一个 loading 的状态
-    childrenRender: (children) => {
-      // if (initialState?.loading) return <PageLoading />;
-      return (
-        <>
-          {children}
-          <SettingDrawer
-            disableUrlParams
-            enableDarkTheme
-            collapse={initialState?.settingDrawerOpen}
-            onCollapseChange={(open) => {
-              setInitialState((s) => ({
-                ...s,
-                settingDrawerOpen: open,
-              }));
-            }}
-            settings={initialState?.settings}
-            onSettingChange={(settings) => {
-              setInitialState((s) => ({
-                ...s,
-                settings,
-              }));
-            }}
+  },
+};
+
+/* ───── 顶栏右侧：单行日期 ───── */
+const WEEK_CN = ['日', '一', '二', '三', '四', '五', '六'];
+const HeaderDate: React.FC = () => {
+  const [now, setNow] = useState(() => dayjs());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(dayjs()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <span
+      style={{ whiteSpace: 'nowrap', color: 'rgba(0,0,0,0.45)', fontSize: 14 }}
+    >
+      {now.format('YYYY年M月D日')} 星期{WEEK_CN[now.day()]}
+    </span>
+  );
+};
+
+/* ───── 完全自定义顶栏：面包屑居左，日期+铃铛+头像居右 ─────
+   不使用 actionsRender / avatarProps / headerContentRender，
+   避免内容被 ProLayout 塞进侧栏底部 */
+const GlobalHeader: React.FC<{ user: any }> = ({ user }) => (
+  <div
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      height: 48,
+      flexShrink: 0,
+      padding: '0 24px',
+      background: '#fff',
+      borderBottom: '1px solid #f0f0f0',
+    }}
+  >
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <GlobalBreadcrumb />
+    </div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+      <HeaderDate />
+      <Badge count={3} size="small">
+        <BellOutlined style={{ fontSize: 18, cursor: 'pointer' }} />
+      </Badge>
+      <Dropdown
+        menu={{
+          items: [
+            { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
+          ],
+          onClick: ({ key }) => {
+            if (key === 'logout') {
+              const token = localStorage.getItem('token');
+              if (token) logoutApi(token).catch(() => {});
+              localStorage.removeItem('token');
+              localStorage.removeItem(TABS_STORAGE_KEY);
+              history.replace('/login');
+            }
+          },
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <Avatar
+            size={30}
+            style={{ backgroundColor: '#1677ff' }}
+            icon={<UserOutlined />}
           />
-        </>
+          <span style={{ fontSize: 14 }}>{displayName(user)}</span>
+        </div>
+      </Dropdown>
+    </div>
+  </div>
+);
+
+/* ───── 分组节点拍平（无 path 的纯菜单分组，子项上提） ───── */
+const flattenMenuGroups = (items: any[] = []): any[] =>
+  (items ?? []).flatMap((it: any) => {
+    const children = it.children ?? it.routes;
+    if (!it.path && children?.length) return flattenMenuGroups(children);
+    return [
+      { ...it, children: children ? flattenMenuGroups(children) : undefined },
+    ];
+  });
+
+export const layout: RunTimeLayoutConfig = ({ initialState }) => {
+  const user = (initialState as InitialState)?.currentUser as any;
+
+  return {
+    title: '毒麻精药品追溯管理平台',
+    layout: 'side',
+    fixSiderbar: true,
+    fixedHeader: false,
+    siderWidth: 216,
+    menu: { locale: false },
+
+    menuDataRender: (menuData) => withIcons(flattenMenuGroups(menuData ?? [])),
+    menuRender: (_props, dom) => (onLoginPage() ? null : dom),
+
+    // 顶栏交给 childrenRender 自绘，关掉 ProLayout 自带头部
+    headerRender: () => null,
+
+    // 关键：去掉 ProLayout 内容区默认 padding，
+    // 否则 100vh 容器被撑出第二根滚动条，顶栏固定失效
+    contentStyle: { padding: 0 },
+
+    // 侧栏底部：用户卡片
+    menuFooterRender: () => {
+      if (onLoginPage() || !user) return null;
+      return (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '12px 16px',
+            borderTop: '1px solid rgba(0,0,0,0.06)',
+          }}
+        >
+          <Avatar
+            size={34}
+            style={{ backgroundColor: '#1677ff' }}
+            icon={<UserOutlined />}
+          />
+          <div style={{ lineHeight: 1.3, overflow: 'hidden' }}>
+            <div
+              style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}
+            >
+              {displayName(user)}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: 'rgba(0,0,0,0.45)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {displayRole(user)}
+            </div>
+          </div>
+        </div>
       );
     },
-    ...initialState?.settings,
+
+    onPageChange: () => {
+      if (!user && !onLoginPage()) history.replace('/login');
+    },
+
+    childrenRender: (children) =>
+      onLoginPage() ? (
+        <>{children}</>
+      ) : (
+        <div
+          style={{
+            height: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          <GlobalHeader user={user} />
+          <GlobalTabs />
+          <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+            {children}
+          </div>
+        </div>
+      ),
   };
 };
-
-/**
- * @name request 配置，可以配置错误处理
- * 它基于 axios 提供了一套统一的网络请求和错误处理方案。
- * @doc https://umijs.org/docs/max/request#配置
- */
-export const request: RequestConfig = {
-  baseURL: isDev ? '' : 'https://pro-api.ant-design-demo.workers.dev',
-  ...errorConfig,
-};
-
-export function rootContainer(container: React.ReactNode) {
-  return (
-    <>
-      <OfflineBanner />
-      <ErrorBoundary>{container}</ErrorBoundary>
-    </>
-  );
-}

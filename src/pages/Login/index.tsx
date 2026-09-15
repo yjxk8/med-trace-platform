@@ -27,9 +27,13 @@ const LoginPage: React.FC = () => {
     setError('');
     try {
       const { token, user } = await login(values.uAccount.trim(), values.uPwd);
+      let currentUser = user;
+      if (!currentUser) {
+        currentUser = (await fetchCurrentUser(token)) ?? undefined; // login 没带 user 就调 me
+      }
       localStorage.setItem('token', token);
-      await setInitialState({ token, currentUser: user });
-      history.push('/drug-transfer'); // 登录后默认进入药库出入库页
+      await setInitialState({ token, currentUser });
+      history.push('/welcome');
     } catch (e: any) {
       setError(e?.message || '登录失败，请稍后重试');
     } finally {
@@ -74,7 +78,7 @@ const LoginPage: React.FC = () => {
           <Alert
             type="error"
             showIcon
-            message={error}
+            title={error}
             style={{ marginBottom: 20 }}
           />
         )}
