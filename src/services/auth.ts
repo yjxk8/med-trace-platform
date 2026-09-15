@@ -62,12 +62,17 @@ export async function logout(token: string): Promise<void> {
   await unwrap(request('/api/auth/logout', { method: 'POST', params: { token } }));
 }
 
-/** 获取当前用户：GET /auth/me?token= */
-export async function fetchCurrentUser(token: string): Promise<CurrentUser> {
-  return unwrap<CurrentUser>(
+/**
+ * 获取当前用户：GET /auth/me?token=xxx
+ * 后端返回裸对象 { user: {...} }（token 无效时 user 为 null），这里解出 user
+ */
+export async function fetchCurrentUser(token: string): Promise<CurrentUser | null> {
+  const body = await unwrap<{ user: CurrentUser | null }>(
     request('/api/auth/me', { method: 'GET', params: { token } }),
   );
+  return body?.user ?? null;
 }
+
 
 /** 修改密码：PUT /auth/password body{token,oldPwd,newPwd}（后续"修改密码弹窗"直接用） */
 export async function changePassword(params: {
