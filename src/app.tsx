@@ -1,15 +1,29 @@
 // src/app.tsx
-
-import { BellOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons';
+import {
+  BellOutlined,
+  KeyOutlined,
+  LogoutOutlined,
+  UserOutlined,
+} from '@ant-design/icons';
 import type { RequestConfig, RunTimeLayoutConfig } from '@umijs/max';
 import { history } from '@umijs/max';
 import { Avatar, Badge, Dropdown } from 'antd';
 import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
+import ChangePasswordModal, {
+  openChangePassword,
+} from '@/components/ChangePasswordModal';
 import GlobalBreadcrumb from '@/components/GlobalBreadcrumb';
 import GlobalTabs, { TABS_STORAGE_KEY } from '@/components/GlobalTabs';
 import type { CurrentUser } from '@/services/auth';
-import { fetchCurrentUser, logout as logoutApi } from '@/services/auth';
+import {
+  cacheUser,
+  clearAuth,
+  fetchCurrentUser,
+  getCachedUser,
+  handle401,
+  logout as logoutApi,
+} from '@/services/auth';
 import { withIcons } from '@/utils/icon';
 
 export interface InitialState {
@@ -21,8 +35,7 @@ const onLoginPage = () => history.location.pathname.startsWith('/login');
 
 /**
  * 字段取值：后端确认用户名在 uName 字段。
- * 同时兼容用户信息被包在 user / data 一层里的响应结构：
- * 顶层取不到时自动下探一层，避免显示兜底文案「用户」。
+ * 同时兼容用户信息被包在 user / data 一层里的响应结构。
  */
 const pick = (u: any, ...keys: string[]): any => {
   if (!u) return undefined;
@@ -33,60 +46,72 @@ const pick = (u: any, ...keys: string[]): any => {
   }
   return undefined;
 };
-
 const displayName = (u: any): string =>
   pick(u, 'uName', 'uAccount', 'userName', 'account', 'name') || '用户';
 const displayRole = (u: any): string =>
   pick(u, 'uRole', 'roleName', 'role', 'roleNames') || '系统管理';
 
-/** 启动时恢复登录态 */
+/** 登录页以外的未登录跳转：统一带 ?redirect=，登录成功后回跳 */
+const gotoLoginWithRedirect = () => {
+  const { pathname, search } = history.location;
+  history.replace(`/login?redirect=${encodeURIComponent(pathname + search)}`);
+};
+
+/**
+ * 启动时恢复登录态（对接文档 §四 行为变化后：
+ * 不再依赖 /auth/me 返回 {user:null}，改为「本地 token + 用户缓存 + 401 统一跳转」）
+ */
 export async function getInitialState(): Promise<InitialState> {
   const token = localStorage.getItem('token') || undefined;
   if (!token) {
-    if (!onLoginPage()) history.replace('/login');
+    if (!onLoginPage()) gotoLoginWithRedirect();
     return {};
   }
+  // 登录页自身不做恢复（页面 useEffect 会清空 initialState）
+  if (onLoginPage()) return {};
+
+  const cached = getCachedUser();
   try {
-    const currentUser = await fetchCurrentUser(token);
+    const currentUser = (await fetchCurrentUser(token)) ?? cached;
+    cacheUser(currentUser);
     if (!currentUser) {
-      localStorage.removeItem('token');
-      if (!onLoginPage()) history.replace('/login');
+      clearAuth();
+      history.replace('/login');
       return {};
     }
     return { token, currentUser };
   } catch {
-    localStorage.removeItem('token');
-    if (!onLoginPage()) history.replace('/login');
-    return {};
+    // 401 已由 unwrap → handle401 统一跳转；其余异常（如网络抖动）先用缓存撑住 UI
+    return { token, currentUser: cached };
   }
 }
 
-/** 全局请求配置：带 token 请求头 + 401 兜底 */
+/** 全局请求配置：带 token 请求头 + 401 兜底（与 services 层共用防抖的 handle401） */
 export const request: RequestConfig = {
   requestInterceptors: [
     (url: string, options: any) => {
       const token = localStorage.getItem('token');
-      if (token)
+      if (token) {
         options.headers = {
           ...options.headers,
           Authorization: `Bearer ${token}`,
         };
+      }
       return { url, options };
     },
   ],
   errorConfig: {
     errorHandler: (error: any) => {
       const status = Number(error?.response?.status ?? error?.status);
-      if (status === 401) {
-        localStorage.removeItem('token');
-        if (!onLoginPage()) history.replace('/login');
-      }
+      const bodyCode = error?.response?.data?.code;
+      if (status === 401 || bodyCode === 401) handle401();
     },
   },
 };
 
 /* ───── 顶栏右侧：单行日期 ───── */
 const WEEK_CN = ['日', '一', '二', '三', '四', '五', '六'];
+
 const HeaderDate: React.FC = () => {
   const [now, setNow] = useState(() => dayjs());
   useEffect(() => {
@@ -102,9 +127,7 @@ const HeaderDate: React.FC = () => {
   );
 };
 
-/* ───── 完全自定义顶栏：面包屑居左，日期+铃铛+头像居右 ─────
-   不使用 actionsRender / avatarProps / headerContentRender，
-   避免内容被 ProLayout 塞进侧栏底部 */
+/* ───── 完全自定义顶栏：面包屑居左，日期+铃铛+头像居右 ───── */
 const GlobalHeader: React.FC<{ user: any }> = ({ user }) => (
   <div
     style={{
@@ -128,13 +151,19 @@ const GlobalHeader: React.FC<{ user: any }> = ({ user }) => (
       <Dropdown
         menu={{
           items: [
+            { key: 'changePwd', icon: <KeyOutlined />, label: '修改密码' },
+            { type: 'divider' },
             { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
           ],
           onClick: ({ key }) => {
+            if (key === 'changePwd') {
+              openChangePassword();
+            }
             if (key === 'logout') {
+              // §5.2：无论后端成功或 401 都本地清理并跳登录（logout 内部已静默 401）
               const token = localStorage.getItem('token');
               if (token) logoutApi(token).catch(() => {});
-              localStorage.removeItem('token');
+              clearAuth();
               localStorage.removeItem(TABS_STORAGE_KEY);
               history.replace('/login');
             }
@@ -174,7 +203,6 @@ const flattenMenuGroups = (items: any[] = []): any[] =>
 
 export const layout: RunTimeLayoutConfig = ({ initialState }) => {
   const user = (initialState as InitialState)?.currentUser as any;
-
   return {
     title: '毒麻精药品追溯管理平台',
     layout: 'side',
@@ -182,17 +210,10 @@ export const layout: RunTimeLayoutConfig = ({ initialState }) => {
     fixedHeader: false,
     siderWidth: 216,
     menu: { locale: false },
-
     menuDataRender: (menuData) => withIcons(flattenMenuGroups(menuData ?? [])),
     menuRender: (_props, dom) => (onLoginPage() ? null : dom),
-
-    // 顶栏交给 childrenRender 自绘，关掉 ProLayout 自带头部
     headerRender: () => null,
-
-    // 关键：去掉 ProLayout 内容区默认 padding，
-    // 否则 100vh 容器被撑出第二根滚动条，顶栏固定失效
     contentStyle: { padding: 0 },
-
     // 侧栏底部：用户卡片
     menuFooterRender: () => {
       if (onLoginPage() || !user) return null;
@@ -230,11 +251,10 @@ export const layout: RunTimeLayoutConfig = ({ initialState }) => {
         </div>
       );
     },
-
     onPageChange: () => {
-      if (!user && !onLoginPage()) history.replace('/login');
+      if (!user && !onLoginPage()) gotoLoginWithRedirect();
     },
-
+    // 内容宿主：顶栏 + 页签条 + 页面；挂载全局修改密码弹窗
     childrenRender: (children) =>
       onLoginPage() ? (
         <>{children}</>
@@ -249,9 +269,19 @@ export const layout: RunTimeLayoutConfig = ({ initialState }) => {
         >
           <GlobalHeader user={user} />
           <GlobalTabs />
-          <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              padding: 12,
+            }}
+          >
             {children}
           </div>
+          <ChangePasswordModal />
         </div>
       ),
   };

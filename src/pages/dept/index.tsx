@@ -1,7 +1,6 @@
 import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import {
   ModalForm,
-  PageContainer,
   ProFormRadio,
   ProFormSelect,
   ProFormText,
@@ -14,12 +13,13 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   TreeSelect,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
+import FillTable from '@/components/FillTable';
+import PageFill from '@/components/PageFill';
 import {
   createDept,
   type DeptTreeNode,
@@ -85,6 +85,7 @@ const DeptPage: React.FC = () => {
     const nameK = applied.nameKw.trim().toLowerCase();
     const codeK = applied.codeKw.trim().toLowerCase();
     if (!nameK && !codeK) return treeData;
+
     const walk = (list: DeptTreeNode[]): DeptTreeNode[] => {
       const res: DeptTreeNode[] = [];
       for (const n of list) {
@@ -153,14 +154,14 @@ const DeptPage: React.FC = () => {
   };
 
   return (
-    <PageContainer title={false}>
-      {/* ===== 筛选栏 ===== */}
+    <PageFill>
+      {/* ===== 筛选栏卡片 ===== */}
       <div
         style={{
           background: '#fff',
           borderRadius: 8,
-          padding: 20,
-          marginBottom: 16,
+          padding: '10px 16px',
+          flexShrink: 0,
         }}
       >
         <Form
@@ -214,13 +215,28 @@ const DeptPage: React.FC = () => {
         </Form>
       </div>
 
-      {/* ===== 部门列表卡片 ===== */}
-      <div style={{ background: '#fff', borderRadius: 8, padding: 20 }}>
+      {/* ===== 部门列表卡片：占满剩余高度，表体内部滚动 ===== */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          background: '#fff',
+          borderRadius: 8,
+          padding: '10px 16px 8px',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
         <div
-          style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            marginBottom: 10,
+            flexShrink: 0,
+          }}
         >
-          <b style={{ fontSize: 16 }}>部门列表</b>
-          <span style={{ color: '#8c8c8c', marginLeft: 12 }}>
+          <b style={{ fontSize: 15 }}>部门列表</b>
+          <span style={{ color: '#8c8c8c', marginLeft: 12, fontSize: 13 }}>
             当前显示 {countNodes(filteredTree)} 个部门
           </span>
           <Space style={{ marginLeft: 'auto' }}>
@@ -240,7 +256,8 @@ const DeptPage: React.FC = () => {
           </Space>
         </div>
 
-        <Table<DeptTreeNode>
+        <FillTable
+          reservedHeight={46}
           rowKey="id"
           size="middle"
           loading={loading}
@@ -345,7 +362,7 @@ const DeptPage: React.FC = () => {
           />
         </Form.Item>
       </ModalForm>
-    </PageContainer>
+    </PageFill>
   );
 };
 

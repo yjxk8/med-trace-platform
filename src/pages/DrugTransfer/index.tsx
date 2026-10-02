@@ -9,12 +9,10 @@ import {
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import {
   ModalForm,
-  PageContainer,
   ProFormDigit,
   ProFormList,
   ProFormSelect,
   ProFormText,
-  ProTable,
 } from '@ant-design/pro-components';
 import {
   Button,
@@ -32,6 +30,8 @@ import {
 } from 'antd';
 import dayjs from 'dayjs';
 import { useEffect, useRef, useState } from 'react';
+import FillTable from '@/components/FillTable';
+import PageFill from '@/components/PageFill';
 import {
   createDrugTransfer,
   type DrugTransferDetail,
@@ -53,7 +53,6 @@ const IO_TYPE_OPTIONS = [
 const DrugTransferList: React.FC = () => {
   const actionRef = useRef<ActionType>();
   const [form] = Form.useForm();
-
   const [filters, setFilters] = useState<Record<string, any>>({});
   const [stats, setStats] = useState({
     todayIn: 0,
@@ -218,9 +217,9 @@ const DrugTransferList: React.FC = () => {
   };
 
   return (
-    <PageContainer title={false}>
+    <PageFill>
       {/* ===== 统计卡片区 ===== */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
         {kpis.map((k) => (
           <div
             key={k.title}
@@ -228,29 +227,30 @@ const DrugTransferList: React.FC = () => {
               flex: 1,
               background: '#fff',
               borderRadius: 8,
-              padding: '20px 24px',
+              padding: '12px 18px',
               display: 'flex',
               alignItems: 'center',
-              gap: 16,
+              gap: 14,
             }}
           >
             <div
               style={{
-                width: 48,
-                height: 48,
+                width: 40,
+                height: 40,
                 borderRadius: 8,
                 background: k.bg,
                 color: '#fff',
-                fontSize: 22,
+                fontSize: 20,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                flexShrink: 0,
               }}
             >
               {k.icon}
             </div>
             <div>
-              <div style={{ fontSize: 26, fontWeight: 600, lineHeight: 1.2 }}>
+              <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2 }}>
                 {k.value}
               </div>
               <div style={{ color: '#8c8c8c', fontSize: 13 }}>{k.title}</div>
@@ -264,8 +264,8 @@ const DrugTransferList: React.FC = () => {
         style={{
           background: '#fff',
           borderRadius: 8,
-          padding: 20,
-          marginBottom: 16,
+          padding: '10px 16px',
+          flexShrink: 0,
         }}
       >
         <Form form={form} layout="inline" onFinish={onSearch}>
@@ -311,40 +311,54 @@ const DrugTransferList: React.FC = () => {
         </Form>
       </div>
 
-      {/* ===== 表格卡片 ===== */}
-      <ProTable<DrugTransferItem>
-        headerTitle="出入库单据"
-        rowKey="id"
-        actionRef={actionRef}
-        columns={columns}
-        search={false} // 内置查询关闭，用上面的自定义筛选栏
-        params={filters} // filters 变化自动触发重新请求
-        options={false}
-        cardBordered={false}
-        request={async (params) => {
-          const { current, pageSize, ...rest } = params;
-          const res = await pageDrugTransfer({
-            ...rest,
-            page: current,
-            size: pageSize,
-          });
-          return {
-            data: res.records ?? [],
-            total: res.total ?? 0,
-            success: true,
-          };
+      {/* ===== 表格卡片：占满剩余高度，表体内部滚动，分页固定 ===== */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          background: '#fff',
+          borderRadius: 8,
+          padding: '2px 16px 4px',
+          display: 'flex',
+          flexDirection: 'column',
         }}
-        pagination={{
-          defaultPageSize: 10,
-          showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
-        }}
-        toolBarRender={() => [
-          <span key="count" style={{ color: '#8c8c8c' }}>
-            今日共 {stats.todayIn + stats.todayOut} 笔
-          </span>,
-        ]}
-      />
+      >
+        <FillTable
+          pro
+          reservedHeight={148}
+          headerTitle="出入库单据"
+          rowKey="id"
+          actionRef={actionRef}
+          columns={columns}
+          search={false} // 内置查询关闭，用上面的自定义筛选栏
+          params={filters} // filters 变化自动触发重新请求
+          options={false}
+          cardBordered={false}
+          request={async (params) => {
+            const { current, pageSize, ...rest } = params;
+            const res = await pageDrugTransfer({
+              ...rest,
+              page: current,
+              size: pageSize,
+            });
+            return {
+              data: res.records ?? [],
+              total: res.total ?? 0,
+              success: true,
+            };
+          }}
+          pagination={{
+            defaultPageSize: 10,
+            showSizeChanger: true,
+            showTotal: (t) => `共 ${t} 条`,
+          }}
+          toolBarRender={() => [
+            <span key="count" style={{ color: '#8c8c8c' }}>
+              今日共 {stats.todayIn + stats.todayOut} 笔
+            </span>,
+          ]}
+        />
+      </div>
 
       {/* ===== 详情抽屉 ===== */}
       <Drawer
@@ -441,7 +455,7 @@ const DrugTransferList: React.FC = () => {
           <ProFormDigit name="retailPrice" label="零售价" width="xs" />
         </ProFormList>
       </ModalForm>
-    </PageContainer>
+    </PageFill>
   );
 };
 

@@ -2,7 +2,7 @@ import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { history, useModel } from '@umijs/max';
 import { Alert, Button, Card, Form, Input } from 'antd';
 import { useEffect, useState } from 'react';
-import { login } from '@/services/auth';
+import { cacheUser, fetchCurrentUser, login } from '@/services/auth';
 
 interface LoginParams {
   uAccount: string;
@@ -13,10 +13,9 @@ const LoginPage: React.FC = () => {
   const [form] = Form.useForm<LoginParams>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  // 登录成功后写入全局 initialState（替代原先写死的"测试用户"）
   const { setInitialState } = useModel('@@initialState');
 
-  // 进入登录页即清空残留登录态（如退出登录后遗留在 initialState 里的旧用户）
+  // 进入登录页即清空残留登录态
   useEffect(() => {
     setInitialState({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -28,12 +27,22 @@ const LoginPage: React.FC = () => {
     try {
       const { token, user } = await login(values.uAccount.trim(), values.uPwd);
       let currentUser = user;
+      // LoginVO 没带用户信息时兜底拉一次 /auth/me
       if (!currentUser) {
-        currentUser = (await fetchCurrentUser(token)) ?? undefined; // login 没带 user 就调 me
+        currentUser = (await fetchCurrentUser(token)) ?? undefined;
       }
+      // §5.2：本地存 token + 用户信息
       localStorage.setItem('token', token);
+      cacheUser(currentUser);
       await setInitialState({ token, currentUser });
-      history.push('/welcome');
+
+      // §5.1/§5.2：带 ?redirect= 回跳（只允许站内路径，防开放重定向）
+      const redirect = (history.location as any)?.query?.redirect as
+        | string
+        | undefined;
+      history.replace(
+        redirect && redirect.startsWith('/') ? redirect : '/welcome',
+      );
     } catch (e: any) {
       setError(e?.message || '登录失败，请稍后重试');
     } finally {
