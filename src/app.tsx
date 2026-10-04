@@ -3,18 +3,23 @@ import {
   BellOutlined,
   KeyOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import type { RequestConfig, RunTimeLayoutConfig } from '@umijs/max';
-import { history } from '@umijs/max';
-import { Avatar, Badge, Dropdown } from 'antd';
+import { history, useLocation } from '@umijs/max';
+import { Avatar, Badge, Button, Dropdown, Menu } from 'antd';
+import type { ItemType } from 'antd/es/menu/interface';
 import dayjs from 'dayjs';
-import { useEffect, useState } from 'react';
+import { createElement, useEffect, useState } from 'react';
 import ChangePasswordModal, {
   openChangePassword,
 } from '@/components/ChangePasswordModal';
 import GlobalBreadcrumb from '@/components/GlobalBreadcrumb';
 import GlobalTabs, { TABS_STORAGE_KEY } from '@/components/GlobalTabs';
+import type { RouteItem } from '@/config/routes';
+import { routes } from '@/config/routes';
 import type { CurrentUser } from '@/services/auth';
 import {
   cacheUser,
@@ -24,7 +29,7 @@ import {
   handle401,
   logout as logoutApi,
 } from '@/services/auth';
-import { withIcons } from '@/utils/icon';
+import { MENU_ICON_MAP } from '@/utils/icon';
 
 export interface InitialState {
   token?: string;
@@ -33,10 +38,6 @@ export interface InitialState {
 
 const onLoginPage = () => history.location.pathname.startsWith('/login');
 
-/**
- * 字段取值：后端确认用户名在 uName 字段。
- * 同时兼容用户信息被包在 user / data 一层里的响应结构。
- */
 const pick = (u: any, ...keys: string[]): any => {
   if (!u) return undefined;
   for (const k of keys) {
@@ -46,30 +47,25 @@ const pick = (u: any, ...keys: string[]): any => {
   }
   return undefined;
 };
+
 const displayName = (u: any): string =>
   pick(u, 'uName', 'uAccount', 'userName', 'account', 'name') || '用户';
+
 const displayRole = (u: any): string =>
   pick(u, 'uRole', 'roleName', 'role', 'roleNames') || '系统管理';
 
-/** 登录页以外的未登录跳转：统一带 ?redirect=，登录成功后回跳 */
 const gotoLoginWithRedirect = () => {
   const { pathname, search } = history.location;
   history.replace(`/login?redirect=${encodeURIComponent(pathname + search)}`);
 };
 
-/**
- * 启动时恢复登录态（对接文档 §四 行为变化后：
- * 不再依赖 /auth/me 返回 {user:null}，改为「本地 token + 用户缓存 + 401 统一跳转」）
- */
 export async function getInitialState(): Promise<InitialState> {
   const token = localStorage.getItem('token') || undefined;
   if (!token) {
     if (!onLoginPage()) gotoLoginWithRedirect();
     return {};
   }
-  // 登录页自身不做恢复（页面 useEffect 会清空 initialState）
   if (onLoginPage()) return {};
-
   const cached = getCachedUser();
   try {
     const currentUser = (await fetchCurrentUser(token)) ?? cached;
@@ -81,12 +77,10 @@ export async function getInitialState(): Promise<InitialState> {
     }
     return { token, currentUser };
   } catch {
-    // 401 已由 unwrap → handle401 统一跳转；其余异常（如网络抖动）先用缓存撑住 UI
     return { token, currentUser: cached };
   }
 }
 
-/** 全局请求配置：带 token 请求头 + 401 兜底（与 services 层共用防抖的 handle401） */
 export const request: RequestConfig = {
   requestInterceptors: [
     (url: string, options: any) => {
@@ -109,6 +103,49 @@ export const request: RequestConfig = {
   },
 };
 
+/* ★ ───── 全局无滚动样式：一次性注入 ─────
+ * 1) html/body/#root 高度 100% + overflow hidden → 浏览器级滚动条消失
+ * 2) .no-scrollbar 工具类：隐藏滚动条但保留滚轮/触控板滚动能力
+ */
+const GlobalStyles: React.FC = () => (
+  <style>{`
+    html, body, #root { height: 100%; overflow: hidden; }
+    .no-scrollbar {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+  `}</style>
+);
+
+/* ───── 侧栏折叠：模块级小 store ───── */
+let siderCollapsed = false;
+const siderListeners = new Set<() => void>();
+
+const setSiderCollapsed = (v: boolean) => {
+  siderCollapsed = v;
+  siderListeners.forEach((l) => {
+    l();
+  });
+};
+
+const useSiderCollapsed = () => {
+  const [v, setV] = useState(siderCollapsed);
+  useEffect(() => {
+    const l = () => setV(siderCollapsed);
+    siderListeners.add(l);
+    return () => void siderListeners.delete(l);
+  }, []);
+  return v;
+};
+
+const SIDER_WIDTH = 216;
+const COLLAPSED_WIDTH = 56;
+
 /* ───── 顶栏右侧：单行日期 ───── */
 const WEEK_CN = ['日', '一', '二', '三', '四', '五', '六'];
 
@@ -127,7 +164,7 @@ const HeaderDate: React.FC = () => {
   );
 };
 
-/* ───── 完全自定义顶栏：面包屑居左，日期+铃铛+头像居右 ───── */
+/* ───── 完全自定义顶栏 ───── */
 const GlobalHeader: React.FC<{ user: any }> = ({ user }) => (
   <div
     style={{
@@ -160,7 +197,6 @@ const GlobalHeader: React.FC<{ user: any }> = ({ user }) => (
               openChangePassword();
             }
             if (key === 'logout') {
-              // §5.2：无论后端成功或 401 都本地清理并跳登录（logout 内部已静默 401）
               const token = localStorage.getItem('token');
               if (token) logoutApi(token).catch(() => {});
               clearAuth();
@@ -191,73 +227,261 @@ const GlobalHeader: React.FC<{ user: any }> = ({ user }) => (
   </div>
 );
 
-/* ───── 分组节点拍平（无 path 的纯菜单分组，子项上提） ───── */
-const flattenMenuGroups = (items: any[] = []): any[] =>
-  (items ?? []).flatMap((it: any) => {
-    const children = it.children ?? it.routes;
-    if (!it.path && children?.length) return flattenMenuGroups(children);
-    return [
-      { ...it, children: children ? flattenMenuGroups(children) : undefined },
-    ];
-  });
+/* ───── 自绘侧栏菜单：数据来自 routes.ts ───── */
+const iconOf = (name?: string) => {
+  if (!name) return undefined;
+  const Comp = MENU_ICON_MAP[name];
+  return Comp ? createElement(Comp) : undefined;
+};
+
+const LEAF_GROUP_MAP: Record<string, string> = {};
+
+const buildMenuItems = (list: RouteItem[]): ItemType[] =>
+  list
+    .filter((r) => r.name && r.path !== '/' && r.path !== '/login')
+    .map((r) => {
+      if (r.routes?.length) {
+        const groupKey = r.menuPath ?? r.path ?? `group:${r.name}`;
+        r.routes.forEach((leaf) => {
+          if (leaf.path) LEAF_GROUP_MAP[leaf.path] = groupKey;
+        });
+        return {
+          key: groupKey,
+          icon: iconOf(r.icon),
+          label: r.name,
+          children: buildMenuItems(r.routes),
+        };
+      }
+      return { key: r.path!, icon: iconOf(r.icon), label: r.name };
+    });
+
+const SIDE_MENU_ITEMS = buildMenuItems(routes);
+
+const SiderMenu: React.FC<{
+  user: any;
+  collapsed: boolean;
+  onToggle: () => void;
+  title?: React.ReactNode;
+  logo?: React.ReactNode;
+}> = ({ user, collapsed, onToggle, title, logo }) => {
+  const location = useLocation();
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([
+    location.pathname,
+  ]);
+
+  useEffect(() => {
+    if (onLoginPage()) return;
+    setSelectedKeys([location.pathname]);
+    const gp = LEAF_GROUP_MAP[location.pathname];
+    setOpenKeys(gp ? [gp] : []);
+  }, [location.pathname]);
+
+  const handleOpenChange = (keys: string[]) => {
+    const latest = keys.find((k) => !openKeys.includes(k));
+    setOpenKeys(latest ? [latest] : []);
+  };
+
+  const width = collapsed ? COLLAPSED_WIDTH : SIDER_WIDTH;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        bottom: 0,
+        width,
+        transition: 'width 0.2s',
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#fff',
+        borderRight: '1px solid #f0f0f0',
+        zIndex: 100,
+        overflow: 'hidden',
+      }}
+    >
+      {/* 顶部：logo + 名称 + 折叠按钮 */}
+      {collapsed ? (
+        <div
+          style={{
+            height: 56,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Button
+            type="text"
+            icon={<MenuUnfoldOutlined />}
+            onClick={onToggle}
+          />
+        </div>
+      ) : (
+        <div
+          onClick={() => history.push('/welcome')}
+          style={{
+            height: 56,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            cursor: 'pointer',
+            padding: '0 8px 0 12px',
+            overflow: 'hidden',
+          }}
+        >
+          {typeof logo === 'string' ? (
+            <img src={logo} alt="logo" style={{ width: 28, height: 28 }} />
+          ) : (
+            logo
+          )}
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              color: 'rgba(0,0,0,0.88)',
+              fontWeight: 600,
+              fontSize: 15,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {title ?? '毒麻精药品追溯管理平台'}
+          </span>
+          <Button
+            type="text"
+            size="small"
+            icon={<MenuFoldOutlined />}
+            onClick={onToggle}
+          />
+        </div>
+      )}
+
+      {/* ★ 菜单：满屏铺满，超长时滚轮可滚但滚动条不可见 */}
+      <Menu
+        mode="inline"
+        className="no-scrollbar"
+        items={SIDE_MENU_ITEMS}
+        selectedKeys={selectedKeys}
+        openKeys={openKeys}
+        onOpenChange={handleOpenChange}
+        onClick={({ key }) => history.push(key)}
+        inlineCollapsed={collapsed}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          borderInlineEnd: 'none',
+          overflowY: 'auto',
+        }}
+      />
+
+      {/* 底部用户卡片 */}
+      {user &&
+        (collapsed ? (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              padding: '12px 0',
+              flexShrink: 0,
+              borderTop: '1px solid rgba(0,0,0,0.06)',
+            }}
+          >
+            <Avatar
+              size={34}
+              style={{ backgroundColor: '#1677ff' }}
+              icon={<UserOutlined />}
+            />
+          </div>
+        ) : (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '12px 16px',
+              flexShrink: 0,
+              borderTop: '1px solid rgba(0,0,0,0.06)',
+            }}
+          >
+            <Avatar
+              size={34}
+              style={{ backgroundColor: '#1677ff', flexShrink: 0 }}
+              icon={<UserOutlined />}
+            />
+            <div style={{ minWidth: 0, lineHeight: 1.3 }}>
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: 'rgba(0,0,0,0.88)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {displayName(user)}
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'rgba(0,0,0,0.45)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {displayRole(user)}
+              </div>
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+};
 
 export const layout: RunTimeLayoutConfig = ({ initialState }) => {
   const user = (initialState as InitialState)?.currentUser as any;
+  const collapsed = useSiderCollapsed();
+  const siderW = collapsed ? COLLAPSED_WIDTH : SIDER_WIDTH;
+
   return {
     title: '毒麻精药品追溯管理平台',
     layout: 'side',
     fixSiderbar: true,
     fixedHeader: false,
-    siderWidth: 216,
-    menu: { locale: false },
-    menuDataRender: (menuData) => withIcons(flattenMenuGroups(menuData ?? [])),
-    menuRender: (_props, dom) => (onLoginPage() ? null : dom),
+    siderWidth: siderW,
+    menuRender: (props) =>
+      onLoginPage() ? null : (
+        <SiderMenu
+          user={user}
+          collapsed={collapsed}
+          onToggle={() => setSiderCollapsed(!collapsed)}
+          title={(props as any).title}
+          logo={(props as any).logo}
+        />
+      ),
     headerRender: () => null,
-    contentStyle: { padding: 0 },
-    // 侧栏底部：用户卡片
-    menuFooterRender: () => {
-      if (onLoginPage() || !user) return null;
-      return (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '12px 16px',
-            borderTop: '1px solid rgba(0,0,0,0.06)',
-          }}
-        >
-          <Avatar
-            size={34}
-            style={{ backgroundColor: '#1677ff' }}
-            icon={<UserOutlined />}
-          />
-          <div style={{ lineHeight: 1.3, overflow: 'hidden' }}>
-            <div
-              style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}
-            >
-              {displayName(user)}
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                color: 'rgba(0,0,0,0.45)',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {displayRole(user)}
-            </div>
-          </div>
-        </div>
-      );
-    },
+    contentStyle: onLoginPage()
+      ? { padding: 0 }
+      : {
+          padding: 0,
+          marginLeft: siderW,
+          width: `calc(100% - ${siderW}px)`,
+          transition: 'margin-left 0.2s, width 0.2s',
+        },
     onPageChange: () => {
       if (!user && !onLoginPage()) gotoLoginWithRedirect();
     },
-    // 内容宿主：顶栏 + 页签条 + 页面；挂载全局修改密码弹窗
     childrenRender: (children) =>
       onLoginPage() ? (
-        <>{children}</>
+        <>
+          <GlobalStyles />
+          {children}
+        </>
       ) : (
         <div
           style={{
@@ -267,6 +491,8 @@ export const layout: RunTimeLayoutConfig = ({ initialState }) => {
             overflow: 'hidden',
           }}
         >
+          {/* ★ 全局无滚动样式注入（body 满屏、no-scrollbar 工具类） */}
+          <GlobalStyles />
           <GlobalHeader user={user} />
           <GlobalTabs />
           <div

@@ -1,57 +1,47 @@
 // src/utils/icon.ts
-
 import {
   ApartmentOutlined,
-  AppstoreOutlined,
   BarChartOutlined,
+  BookOutlined,
   DatabaseOutlined,
   ExperimentOutlined,
   FileDoneOutlined,
   HomeOutlined,
   IdcardOutlined,
+  LinkOutlined,
   MedicineBoxOutlined,
   ProfileOutlined,
   QrcodeOutlined,
   SearchOutlined,
   SettingOutlined,
   SwapOutlined,
+  TeamOutlined,
   UserOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import type { ComponentType } from 'react';
-import { createElement } from 'react';
 
-const ICON_MAP: Record<string, ComponentType> = {
+/**
+ * 菜单图标名 → 组件引用。
+ * 只存组件引用，由 app.tsx 的 transformMenu 在渲染时 createElement 实例化，
+ * 保证本文件保持 .ts（无 JSX）且单一遍历完成 key 注入 + 图标挂载。
+ */
+export const MENU_ICON_MAP: Record<string, any> = {
   HomeOutlined,
-  AppstoreOutlined,
   WarningOutlined,
+  BookOutlined,
   FileDoneOutlined,
   SwapOutlined,
   DatabaseOutlined,
-  UserOutlined,
-  BarChartOutlined,
-  SettingOutlined,
-  ApartmentOutlined,
+  LinkOutlined,
   MedicineBoxOutlined,
   IdcardOutlined,
   ProfileOutlined,
   QrcodeOutlined,
   SearchOutlined,
   ExperimentOutlined,
+  UserOutlined,
+  BarChartOutlined,
+  ApartmentOutlined,
+  TeamOutlined,
+  SettingOutlined,
 };
-
-/** 把路由里的 icon 字符串转成 antd 图标节点 */
-export function toIcon(name?: string | React.ReactNode): React.ReactNode {
-  if (!name || typeof name !== 'string') return name ?? null;
-  const Cmp = ICON_MAP[name];
-  return Cmp ? createElement(Cmp) : null;
-}
-
-/** menuDataRender 用：递归把菜单树里的字符串 icon 全部转换 */
-export function withIcons(menuData: any[] = []): any[] {
-  return menuData.map((item) => ({
-    ...item,
-    icon: toIcon(item.icon),
-    children: item.children ? withIcons(item.children) : undefined,
-  }));
-}
