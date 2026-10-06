@@ -334,7 +334,7 @@ const DrugTransferList: React.FC = () => {
           params={filters} // filters 变化自动触发重新请求
           options={false}
           cardBordered={false}
-          request={async (params) => {
+          request={async (params: { current?: number; pageSize?: number }) => {
             const { current, pageSize, ...rest } = params;
             const res = await pageDrugTransfer({
               ...rest,
@@ -350,7 +350,7 @@ const DrugTransferList: React.FC = () => {
           pagination={{
             defaultPageSize: 10,
             showSizeChanger: true,
-            showTotal: (t) => `共 ${t} 条`,
+            showTotal: (t: number) => `共 ${t} 条`,
           }}
           toolBarRender={() => [
             <span key="count" style={{ color: '#8c8c8c' }}>

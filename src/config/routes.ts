@@ -110,7 +110,7 @@ export const routes: RouteItem[] = [
         path: '/stock-query',
         name: '库存查询',
         icon: 'SearchOutlined',
-        component: './Placeholder',
+        component: './drugStock',
       },
       {
         path: '/surgery-box',
