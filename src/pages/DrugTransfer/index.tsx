@@ -48,7 +48,6 @@ import type { Dayjs } from 'dayjs';
 import { useEffect, useRef, useState } from 'react';
 import FillTable from '@/components/FillTable';
 import PageFill from '@/components/PageFill';
-import { listPharmacyOptions } from '@/services/dept';
 import {
   type DrugIoExtendBrief,
   type DrugTransferDetail,
@@ -61,6 +60,7 @@ import {
   markPrinted,
   pageDrugTransfer,
 } from '@/services/drugTransfer';
+import { listPharmacyOptions } from '@/services/org/dept';
 import CreateDocDrawer from './CreateDoc';
 import {
   dash,

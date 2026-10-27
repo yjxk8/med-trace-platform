@@ -34,13 +34,13 @@ import type { Key } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import FillTable from '@/components/FillTable';
 import PageFill from '@/components/PageFill';
-import { listPharmacyOptions } from '@/services/dept';
 import {
   type DrugStockGroupVO,
   type DrugStockListVO,
   type DrugStockPageQuery,
   getDrugStockPageGrouped,
 } from '@/services/inv/drugStock';
+import { listPharmacyOptions } from '@/services/org/dept';
 import DrugStockDetailDrawer from './DetailDrawer';
 import StatsCards from './StatsCards';
 import {

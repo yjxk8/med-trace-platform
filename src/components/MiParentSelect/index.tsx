@@ -8,6 +8,7 @@
  * - 机构 >100 家时选项截断【§八#6 /mi/tree 未建；要标准 TreeSelect 或全量端点喊后端】
  */
 import { Select } from 'antd';
+import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { buildMiIndex, getMiPage, type MiVO } from '@/services/org/mi';
 
@@ -20,6 +21,7 @@ interface Props {
   includeTop?: boolean;
   placeholder?: string;
   disabled?: boolean;
+  style?: CSSProperties;
 }
 
 export default function MiParentSelect({
@@ -29,6 +31,7 @@ export default function MiParentSelect({
   includeTop = true,
   placeholder,
   disabled,
+  style,
 }: Props) {
   const [records, setRecords] = useState<MiVO[]>([]);
   const [loading, setLoading] = useState(false);
@@ -80,7 +83,7 @@ export default function MiParentSelect({
       allowClear={false}
       placeholder={placeholder ?? '选择父级机构'}
       notFoundContent={loading ? '加载中…' : '暂无机构'}
-      style={{ width: '100%' }}
+      style={style ?? { width: '100%' }}
     />
   );
 }

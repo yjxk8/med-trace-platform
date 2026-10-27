@@ -161,6 +161,12 @@ export const routes: RouteItem[] = [
         component: './Menu',
       },
       {
+        path: '/system/role',
+        name: '角色管理',
+        icon: 'TeamOutlined',
+        component: './Role',
+      },
+      {
         path: '/user',
         name: '用户管理',
         icon: 'TeamOutlined',
