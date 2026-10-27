@@ -1,0 +1,247 @@
+// 角色管理页面局部样式（非模块化引入，类名统一 role- 前缀防冲突）
+
+// ===== 列表页：表格填充区（flex 自管高度，分页钉底）=====
+// 结构：筛选区(fixed) → Tag行(fixed) → .role-table-fill(flex:1)
+//       → pro-card(flex:1) → card-body(flex:1) → table-wrapper(flex:1)
+//       → .ant-table(flex:1, 内部滚动+表头sticky) → .ant-pagination(fixed, 钉底)
+.role-table-fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  // ProTable 卡片：纵向 flex 占满
+  .ant-pro-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .ant-pro-card-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+
+  // 表格容器：占据分页以外的全部空间
+  .ant-table-wrapper {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  // 表格本体：溢出在内部滚动（不出页面级/卡片级滚动条）
+  .ant-table {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  // 表头吸附（滚动容器内 sticky）
+  .ant-table-thead > tr > th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  // 分页：钉死底部，不随内容浮动（第 2 页只有 2 行时也贴底）
+  .ant-table-pagination.ant-pagination {
+    flex-shrink: 0;
+    margin: 12px 0 4px;
+  }
+}
+
+// ===== 列表页：已选条件 Tag 行 =====
+.role-filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: -4px 0 10px;
+  flex-shrink: 0; // 不被压缩
+}
+.role-filter-tags__label {
+  color: #8c8c8c;
+  font-size: 12px;
+  margin-right: 6px;
+}
+.role-filter-tags__item {
+  margin-inline-end: 4px;
+}
+
+// ===== 列表页：sort 列头提示 =====
+.role-sort-title {
+  display: inline-flex;
+  align-items: center;
+}
+
+// ===== 分配菜单弹窗：工具条 =====
+.role-tree-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 4px;
+}
+.role-tree-toolbar__search {
+  width: 220px;
+}
+.role-tree-count {
+  margin-left: auto;
+  color: #8c8c8c;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+// ===== 分配菜单弹窗：级联说明 =====
+.role-cascade-tip {
+  color: #8c8c8c;
+  font-size: 12px;
+  margin: 4px 0 8px;
+}
+
+// ===== 分配菜单弹窗：树容器 =====
+.role-tree-box {
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+// ===== 分配菜单弹窗：树节点（图标 + 名称 + 类型标识）=====
+.role-menu-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.role-menu-node__icon {
+  color: #8c8c8c;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.role-menu-node__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+.role-menu-node__tag {
+  margin-inline-end: 0;
+  transform: scale(0.85);
+  transform-origin: left center;
+  flex-shrink: 0;
+}
+
+// 停用节点置灰（【待后端：BE-ROLE-OPT-03】后端返回含停用节点后生效）
+.role-menu-node--disabled {
+  color: #bfbfbf;
+  .role-menu-node__icon {
+    color: #d9d9d9;
+  }
+}
+.role-tree-box--tabbed {
+  max-height: 380px; // 页签占用一行高度，适当下调，避免弹窗整体超高
+}
+
+// 追加（其余样式不变）
+
+// ===== 分配菜单弹窗：左右双栏布局 =====
+.role-assign-body {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+.role-assign-left {
+  flex: 1;
+  min-width: 0;
+}
+
+// 右侧已选权限面板
+.role-assign-right {
+  width: 300px;
+  flex-shrink: 0;
+  border-left: 1px solid #f0f0f0;
+  padding-left: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.role-assign-right__title {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.role-assign-right__count {
+  background: #1677ff;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 400;
+  padding: 0 8px;
+  line-height: 18px;
+}
+.role-assign-right__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 8px;
+}
+
+// 分组（按应用端）
+.role-assign-group {
+  margin-bottom: 10px;
+}
+.role-assign-group__label {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.role-assign-group__num {
+  background: #f0f0f0;
+  color: #595959;
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+}
+.role-assign-group__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.role-assign-tag {
+  margin-inline-end: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+// 窄屏兜底：弹窗不足 880 时右面板换行到下方
+@media (max-width: 920px) {
+  .role-assign-body {
+    flex-direction: column;
+  }
+  .role-assign-right {
+    width: 100%;
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px solid #f0f0f0;
+    padding-top: 8px;
+  }
+}

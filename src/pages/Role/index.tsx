@@ -1,21 +1,34 @@
 /**
- * 角色管理（分页表 + 多条件筛选）—— 契约：角色管理 v1.0 §2.2/§2.3/§7
- * - 手动筛选区（对齐菜单模块风格）：name/code/roleType/dataScope/roleScope，filterRef 收集后 reload
- * - 分页：后端返回 IPage{records,total}（§2.3，无统一 wrapper），request 回调内适配
- *   {data,total,success}——与 ProTable 约定对齐，页面层不感知后端结构
- * - 删除为逻辑删（del_flag=2），本期无恢复/启停接口【待后端】，确认文案不承诺可恢复
- * - t_user_role 未上线，删除暂无绑定校验【后端 TODO】
- * - 操作列 ⚠️ 第一参是 dom，必须占位 _（历史坑，沿用菜单模块）
+ * 角色管理（分页表 + 多条件筛选 + 已选条件 Tag）—— 契约：角色管理 v1.0 §2.2/§2.3/§7
+ * 修复：分页布局——显式传 pagination 会绕过 FillTable 自适应填充，导致卡片高度
+ *      塌缩为内容高度（滚动条 + 分页浮动）。改为 flex 自管：
+ *      筛选区/Tag 固定 → 表格区 flex:1 撑满剩余高度（.role-table-fill）→
+ *      表格内部滚动 + 表头 sticky → 分页钉死底部（与行数无关）。
+ *      已选条件 Tag 出现/消失时高度自动重分配，不再依赖 reservedHeight 手调。
+ * 【待后端：BE-ROLE-OPT-01】启用/停用接口落地后，操作列追加第 4 个操作并收进「更多」Dropdown
+ * 【待后端：BE-ROLE-OPT-02】t_user_role 绑定校验上线后，删除失败文案由后端透传（前端已兼容）
+ * 【待后端：BE-ROLE-OPT-06】统一响应体 wrapper + Authorization 格式落地后，仅需 bizRequest 侧适配
  */
 import {
   ApartmentOutlined,
   DeleteOutlined,
   EditOutlined,
+  InfoCircleOutlined,
   PlusOutlined,
 } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
-import { App, Button, Input, Modal, Select, Space, Tooltip } from 'antd';
-import { useRef, useState } from 'react';
+import {
+  App,
+  Button,
+  Empty,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Tag,
+  Tooltip,
+} from 'antd';
+import { useMemo, useRef, useState } from 'react';
 import FillTable from '@/components/FillTable';
 import PageFill from '@/components/PageFill';
 import {
@@ -34,12 +47,30 @@ import {
   renderRoleScope,
   renderRoleType,
 } from './shared';
+import './index.less';
+
+/** 已选条件支持的筛选键 */
+type FilterKey = 'name' | 'code' | 'roleType' | 'dataScope' | 'roleScope';
+
+interface ActiveFilter {
+  key: FilterKey;
+  label: string;
+}
+
+/** Select 选项反查 label（S() 归一化，对齐 shared 红线） */
+function findLabel(
+  opts: { value: number; label: string }[],
+  v: number | undefined,
+): string {
+  if (v == null) return '';
+  return opts.find((o) => String(o.value) === String(v))?.label ?? String(v);
+}
 
 export default function RoleManage() {
   const { message } = App.useApp();
   const actionRef = useRef<ActionType | undefined>(undefined);
 
-  // ===== 筛选态（与菜单模块同构：state 控制 UI，filterRef 供 request 读取）=====
+  // ===== 筛选态（state 控 UI，filterRef 供 request 读取）=====
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [roleType, setRoleType] = useState<number | undefined>(undefined);
@@ -51,6 +82,32 @@ export default function RoleManage() {
   const [editing, setEditing] = useState<RoleVO | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignRole, setAssignRole] = useState<RoleVO | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null); // 行删除独立 loading
+
+  /** 已选条件 Tag 数据源（随筛选态派生，单个可移除） */
+  const activeFilters = useMemo<ActiveFilter[]>(() => {
+    const arr: ActiveFilter[] = [];
+    const n = name.trim();
+    const c = code.trim();
+    if (n) arr.push({ key: 'name', label: `名称：${n}` });
+    if (c) arr.push({ key: 'code', label: `编码：${c}` });
+    if (roleType != null)
+      arr.push({
+        key: 'roleType',
+        label: `角色类型：${findLabel(ROLE_TYPE_OPTIONS, roleType)}`,
+      });
+    if (dataScope != null)
+      arr.push({
+        key: 'dataScope',
+        label: `数据范围：${findLabel(DATA_SCOPE_OPTIONS, dataScope)}`,
+      });
+    if (roleScope != null)
+      arr.push({
+        key: 'roleScope',
+        label: `角色范围：${findLabel(ROLE_SCOPE_OPTIONS, roleScope)}`,
+      });
+    return arr;
+  }, [name, code, roleType, dataScope, roleScope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doSearch = () => {
     filterRef.current = {
@@ -60,7 +117,7 @@ export default function RoleManage() {
       dataScope,
       roleScope,
     };
-    actionRef.current?.reloadAndRest?.();
+    actionRef.current?.reloadAndRest?.(); // 筛选后页码重置为 1
   };
 
   const doReset = () => {
@@ -70,7 +127,20 @@ export default function RoleManage() {
     setDataScope(undefined);
     setRoleScope(undefined);
     filterRef.current = {};
-    actionRef.current?.reloadAndRest?.();
+    actionRef.current?.reloadAndRest?.(); // 重置后页码重置为 1
+  };
+
+  /** 已选条件 Tag 单个移除（同步 filterRef 并重置页码） */
+  const removeFilter = (key: FilterKey) => {
+    if (key === 'name') setName('');
+    else if (key === 'code') setCode('');
+    else if (key === 'roleType') setRoleType(undefined);
+    else if (key === 'dataScope') setDataScope(undefined);
+    else if (key === 'roleScope') setRoleScope(undefined);
+    const next = { ...filterRef.current };
+    delete next[key];
+    filterRef.current = next;
+    actionRef.current?.reloadAndRest?.(); // 移除条件后页码重置为 1
   };
 
   const openCreate = () => {
@@ -78,21 +148,26 @@ export default function RoleManage() {
     setFormOpen(true);
   };
 
+  /** 删除：danger 操作，独立行内 loading，与表格 loading 分离 */
   const removeRole = (r: RoleVO) => {
     Modal.confirm({
       title: `删除角色「${r.name}」？`,
-      // 逻辑删除但本期无恢复入口；t_user_role 未上线暂无绑定校验（后端 TODO）
-      content: '删除后该角色不再可用，已绑定用户的访问将同步失效。确定删除吗？',
+      // 文案明确「逻辑删除、不可恢复」；绑定校验文案依赖后端【待后端：BE-ROLE-OPT-02】
+      content:
+        '该操作为逻辑删除，删除后不可恢复，已绑定用户的访问将同步失效。确定删除吗？',
       okText: '删除',
       okButtonProps: { danger: true },
       onOk: async () => {
+        setDeletingId(r.id);
         try {
-          const res = await deleteRole(r.id);
+          const res = await deleteRole(r.id); // 【待后端：BE-ROLE-OPT-02】绑定数校验与友好报错
           message.success(res?.message || '删除成功');
           actionRef.current?.reload();
         } catch (e) {
           message.error((e as Error).message);
-          throw e;
+          throw e; // 保持确认框开启（对齐菜单模块）
+        } finally {
+          setDeletingId(null);
         }
       },
     });
@@ -113,6 +188,7 @@ export default function RoleManage() {
       dataIndex: 'dataScope',
       width: 130,
       align: 'center',
+      // 二期合规扩展位【待后端：BE-ROLE-OPT-09】
       render: (_, r) => renderDataScope(r.dataScope),
     },
     {
@@ -123,9 +199,17 @@ export default function RoleManage() {
       render: (_, r) => renderRoleScope(r.roleScope),
     },
     {
-      title: '排序',
+      title: (
+        <span className="role-sort-title">
+          排序
+          {/* sort 列头提示「越小越靠前」 */}
+          <Tooltip title="值越小越靠前">
+            <InfoCircleOutlined style={{ color: '#bfbfbf', marginLeft: 2 }} />
+          </Tooltip>
+        </span>
+      ),
       dataIndex: 'sort',
-      width: 60,
+      width: 70,
       align: 'center',
       render: (_, r) => r.sort ?? '-',
     },
@@ -183,6 +267,7 @@ export default function RoleManage() {
               size="small"
               danger
               style={{ padding: '0 4px' }}
+              loading={deletingId === r.id} // 行操作 loading 与表格 loading 分离
               icon={<DeleteOutlined style={{ fontSize: 14 }} />}
               onClick={() => removeRole(r)}
             />
@@ -191,29 +276,25 @@ export default function RoleManage() {
       ),
     },
   ];
+  // 操作列说明：当前 3 个操作未超过「更多」下拉阈值；
+  // 【待后端：BE-ROLE-OPT-01】启停接口落地后追加第 4 个操作，届时收进 Dropdown「更多」
 
   return (
     <PageFill>
       <div
         style={{
           flex: 1,
-          minHeight: 0,
+          minHeight: 0, // 关键：允许本容器被子项压缩，flex 链路生效的前提
           background: '#fff',
           borderRadius: 8,
-          padding: '0 16px 4px',
+          padding: '12px 16px 8px',
           display: 'flex',
           flexDirection: 'column',
         }}
       >
-        {/* 筛选区：name / code / 三枚举 */}
+        {/* 筛选区：查询主按钮 / 重置次按钮（固定高度，flexShrink:0） */}
         <div
-          style={{
-            display: 'flex',
-            gap: 8,
-            marginBottom: 12,
-            flexShrink: 0,
-            paddingTop: 12,
-          }}
+          style={{ display: 'flex', gap: 8, marginBottom: 8, flexShrink: 0 }}
         >
           <Input
             allowClear
@@ -269,36 +350,83 @@ export default function RoleManage() {
           </Button>
         </div>
 
-        <FillTable
-          pro
-          reservedHeight={190}
-          headerTitle="角色列表"
-          rowKey={(r: RoleVO) => r.id}
-          actionRef={actionRef}
-          columns={columns}
-          search={false}
-          options={{ reload: true, density: false, setting: false }}
-          cardBordered={false}
-          scroll={{ x: 1200 }}
-          request={async (params: { current?: number; pageSize?: number }) => {
-            try {
-              // §2.3：后端返回 IPage 原始结构，此处做 ProTable 适配
-              const page = await getRolePage({
-                ...filterRef.current,
-                page: params.current,
-                size: params.pageSize,
-              });
-              return {
-                data: page.records ?? [],
-                total: page.total ?? 0,
-                success: true,
-              };
-            } catch (e) {
-              message.error((e as Error).message);
-              return { data: [], total: 0, success: false };
-            }
-          }}
-        />
+        {/* 已选条件 Tag（单个移除，移除后页码重置；出现/消失由 flex 自动重分配高度） */}
+        {activeFilters.length > 0 && (
+          <div className="role-filter-tags">
+            <span className="role-filter-tags__label">已选条件：</span>
+            {activeFilters.map((f) => (
+              <Tag
+                key={f.key}
+                closable
+                className="role-filter-tags__item"
+                onClose={() => removeFilter(f.key)}
+              >
+                {f.label}
+              </Tag>
+            ))}
+          </div>
+        )}
+
+        {/* 修复：表格填充区——flex:1 撑满剩余高度；表格内部滚动 + 表头 sticky +
+            分页钉底（样式见 .role-table-fill），不再依赖 FillTable 高度自适应 */}
+        <div className="role-table-fill">
+          <FillTable
+            pro
+            headerTitle="角色列表"
+            rowKey={(r: RoleVO) => r.id}
+            actionRef={actionRef}
+            columns={columns}
+            search={false}
+            options={{ reload: true, density: false, setting: false }}
+            cardBordered={false}
+            // 修复：只传横向滚动；纵向高度交由 .role-table-fill 的 flex 布局管理，
+            // 避免与 FillTable 注入的 scroll.y 叠加产生双滚动条
+            scroll={{ x: 1200 }}
+            // 修复：固定每页 10 行
+            pagination={{
+              pageSize: 10,
+              defaultPageSize: 10,
+              showSizeChanger: false,
+            }}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无角色"
+                >
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={openCreate}
+                  >
+                    新增角色
+                  </Button>
+                </Empty>
+              ),
+            }}
+            request={async (params: {
+              current?: number;
+              pageSize?: number;
+            }) => {
+              try {
+                // IPage → ProTable 结构适配在页面回调完成（§2.3，service 层保持原始类型）
+                const page = await getRolePage({
+                  ...filterRef.current,
+                  page: params.current,
+                  size: params.pageSize,
+                });
+                return {
+                  data: page.records ?? [],
+                  total: page.total ?? 0,
+                  success: true,
+                };
+              } catch (e) {
+                message.error((e as Error).message);
+                return { data: [], total: 0, success: false };
+              }
+            }}
+          />
+        </div>
       </div>
 
       <RoleFormModal

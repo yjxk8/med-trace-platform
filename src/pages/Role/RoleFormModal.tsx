@@ -1,14 +1,15 @@
 /**
- * 角色新增/编辑弹窗 —— 契约：角色管理 v1.0 §6.1/§6.4
- * - code 锁定（§6.4）：编辑态 disabled + extra 提示；提交时强制回填 editing.code
- *   （disabled 字段若被 reset 仍可能丢值，回填是双保险，防「编码创建后不允许修改」报错）
- * - miId 本期不暴露：不传 → 后端默认 0（平台级）【待确认：是否允许前端指定】
- * - remark：空串经 cleanPayload 落 NULL（§2.4）；回显 null→undefined 防受控告警
- * - 回显用列表行数据而非 /role/detail：分页 VO 字段完整（区别于菜单树节点可能不全的场景）
- * - 新增默认值对齐后端：roleType=1 dataScope=2 roleScope=2 sort=5
+ * 角色新增/编辑弹窗（lint 修复版）—— 契约：角色管理 v1.0 §6.1/§6.4
+ * lint 修复：noNonNullAssertion——去掉 editing!.code，code 回填移入
+ *            if (isEdit && editing) 守卫内（TS 收窄后直接取 editing.code，无行为变化）
+ * 保留优化：新增/编辑模式区分标题·按钮文案·成功提示 / code 编辑态锁定 /
+ *      校验失败自动聚焦第一个错误字段 / 提交 loading+disabled 防重复 /
+ *      未保存关闭二次确认 / Section 分区（基础信息/权限范围/其他）
+ * 【待后端：BE-ROLE-OPT-05】code 锁定（4101）与 uk_mi_code 唯一冲突（4102）友好错误码
+ * 【待后端：BE-ROLE-OPT-08】miId 由后端从登录态强制填充，前端不渲染不提交
  */
-import { App, Col, Form, Input, InputNumber, Row, Select } from 'antd';
-import { useEffect, useState } from 'react';
+import { App, Col, Form, Input, InputNumber, Modal, Row, Select } from 'antd';
+import { useEffect, useRef, useState } from 'react';
 import DraggableModal from '@/components/DraggableModal';
 import {
   createRole,
@@ -33,6 +34,12 @@ interface Props {
   onSaved: () => void;
 }
 
+/** 表单值（不含 id / miId——miId 后端登录态填充【待后端：BE-ROLE-OPT-08】） */
+type RoleFormValues = Omit<RoleSaveDTO, 'id'>;
+
+/** validateFields 拒绝结构（局部最小类型，避免 any） */
+type FormValidateError = { errorFields?: { name?: unknown }[] };
+
 const itemMb = { marginBottom: 10 } as const;
 const C2 = { span: 12 } as const;
 
@@ -54,9 +61,10 @@ const Section = ({ title }: { title: string }) => (
 );
 
 /** 行数据 → 表单值：枚举缺省对齐后端默认；null→undefined */
-function normalizeToForm(d: RoleVO) {
+function normalizeToForm(d: RoleVO): RoleFormValues {
   return {
-    ...d,
+    name: d.name,
+    code: d.code,
     roleType: d.roleType ?? ROLE_TYPE.PLATFORM,
     dataScope: d.dataScope ?? DATA_SCOPE.DEPT,
     roleScope: d.roleScope ?? ROLE_SCOPE.NORMAL,
@@ -74,58 +82,103 @@ export default function RoleFormModal({
   const { message } = App.useApp();
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const savedRef = useRef(false); // 保存成功后关闭不弹「未保存确认」
   const isEdit = !!editing?.id;
 
   useEffect(() => {
     if (!open) return;
+    savedRef.current = false; // 每次打开重置保存标记
     form.resetFields();
     if (isEdit && editing) {
       form.setFieldsValue(normalizeToForm(editing));
     } else {
+      // 新增默认值对齐后端：roleType=1 dataScope=2 roleScope=2 sort=5
       form.setFieldsValue({
-        roleType: ROLE_TYPE.PLATFORM, // 后端默认 1
-        dataScope: DATA_SCOPE.DEPT, // 后端默认 2
-        roleScope: ROLE_SCOPE.NORMAL, // 后端默认 2
-        sort: 5, // 后端默认 5，越小越靠前
+        roleType: ROLE_TYPE.PLATFORM,
+        dataScope: DATA_SCOPE.DEPT,
+        roleScope: ROLE_SCOPE.NORMAL,
+        sort: 5,
       });
     }
   }, [open, editing]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** 未保存确认——有改动弹确认，无改动直接关闭 */
+  const handleClose = () => {
+    if (savedRef.current || !form.isFieldsTouched()) {
+      onClose();
+      return;
+    }
+    Modal.confirm({
+      title: '未保存的修改',
+      content: '当前弹窗有未保存的修改，关闭后将丢失，确定关闭？',
+      okText: '丢弃并关闭',
+      okButtonProps: { danger: true },
+      cancelText: '继续编辑',
+      onOk: onClose,
+    });
+  };
+
   const submit = async () => {
-    const v = await form.validateFields();
+    let v: RoleFormValues;
+    try {
+      v = await form.validateFields();
+    } catch (err) {
+      // 校验失败自动聚焦第一个错误字段
+      const e = err as FormValidateError;
+      const names = e.errorFields?.[0]?.name as (string | number)[] | undefined;
+      const first = names?.[0];
+      if (first != null) {
+        form.scrollToField(first);
+        form.focusField?.(first);
+      }
+      return;
+    }
     setSaving(true);
     try {
-      // ⚠️ code 锁定：编辑态强制回填原值（disabled 字段丢值双保险）
+      // lint 修复：payload 统一按新增形态构建（code 取表单值），
+      // 编辑态的 code 锁定回填移入下方守卫内（TS 收窄后取 editing.code，替代 editing!.code）
       const payload: RoleSaveDTO = {
         name: v.name,
-        code: isEdit ? editing!.code : v.code,
+        code: v.code,
         roleType: v.roleType,
         dataScope: v.dataScope,
         roleScope: v.roleScope,
         sort: v.sort ?? 5,
-        remark: v.remark, // 空串经 cleanPayload 落 NULL（§2.4）
-        // miId 不传 → 后端默认 0 平台级【待确认：是否允许前端指定】
+        remark: v.remark, // 空串经 service 层 cleanPayload 落 NULL（§2.4）
+        // miId 不提交 → 后端默认 0 平台级【待后端：BE-ROLE-OPT-08】
       };
       if (isEdit && editing) {
-        const res = await updateRole({ id: editing.id, ...payload });
+        // code 锁定：守卫内 TS 已收窄 editing 非空，显式覆盖 code 为原值（disabled 字段丢值双保险）
+        // 【待后端：BE-ROLE-OPT-05】4101 code 锁定 / 4102 编码已存在，当前 message 透传
+        const res = await updateRole({
+          id: editing.id,
+          ...payload,
+          code: editing.code,
+        });
         message.success(res?.message || '修改成功');
       } else {
         const res = await createRole(payload);
         message.success(res?.message || '创建成功');
       }
+      savedRef.current = true;
       onSaved();
+    } catch (e) {
+      message.error((e as Error).message); // 失败透传且不关闭
     } finally {
       setSaving(false);
     }
   };
 
   return (
+    // DraggableModal 透传 Modal 属性（okText/okButtonProps/confirmLoading）
     <DraggableModal
       title={isEdit ? '编辑角色' : '新增角色'}
       open={open}
       onOk={submit}
       confirmLoading={saving}
-      onCancel={onClose}
+      okButtonProps={{ disabled: saving }} // loading + disabled 双防重复
+      okText={isEdit ? '保存' : '创建'}
+      onCancel={handleClose} // 未保存确认
       destroyOnClose
       width={640}
       centered
@@ -138,7 +191,7 @@ export default function RoleFormModal({
       }}
     >
       <Form form={form} layout="vertical">
-        <Section title="基本信息" />
+        <Section title="基础信息" />
         <Row gutter={12}>
           <Col {...C2}>
             <Form.Item
@@ -160,7 +213,7 @@ export default function RoleFormModal({
               extra={
                 <span style={{ fontSize: 12 }}>
                   {isEdit
-                    ? '编码创建后不可修改'
+                    ? '创建后不可修改'
                     : '机构内唯一；建议小写下划线，如 hospital_pharmacist'}
                 </span>
               }
@@ -207,9 +260,7 @@ export default function RoleFormModal({
             <Form.Item
               name="sort"
               label="排序"
-              extra={
-                <span style={{ fontSize: 12 }}>同级排序，值越小越靠前</span>
-              }
+              extra={<span style={{ fontSize: 12 }}>值越小越靠前</span>}
               style={itemMb}
             >
               <InputNumber min={0} max={9999} style={{ width: '100%' }} />
@@ -229,7 +280,7 @@ export default function RoleFormModal({
         {isEdit && (
           <div style={{ color: '#999', fontSize: 12 }}>
             角色编码创建后锁定（后端校验，传不一致值将报错）；机构归属 miId
-            本期固定平台级 0 【是否开放选择待产品确认】
+            本期固定平台级 0 【待后端：BE-ROLE-OPT-08】
           </div>
         )}
       </Form>
