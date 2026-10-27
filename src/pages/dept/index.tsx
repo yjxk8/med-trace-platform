@@ -264,7 +264,9 @@ const DeptPage: React.FC = () => {
           dataSource={filteredTree}
           pagination={false}
           expandedRowKeys={effectiveExpandedKeys}
-          onExpandedRowsChange={(keys) => setExpandedKeys([...keys])}
+          onExpandedRowsChange={(keys: readonly React.Key[]) =>
+            setExpandedKeys([...keys])
+          }
           columns={
             [
               { title: '部门名称', dataIndex: 'deptName' },

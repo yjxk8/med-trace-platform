@@ -1,3 +1,8 @@
+/**
+ * 登录页 —— v3 §3.1：body {account, pwd}（原 uAccount/uPwd 作废）
+ * ★ 本轮修复遗留 bug：antd Alert 内容 prop 是 message 不是 title——
+ *   原 <Alert title={error}> 导致「账号或密码错误」等后端文案从不显示
+ */
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { history, useModel } from '@umijs/max';
 import { Alert, Button, Card, Form, Input } from 'antd';
@@ -5,8 +10,8 @@ import { useEffect, useState } from 'react';
 import { cacheUser, fetchCurrentUser, login } from '@/services/auth';
 
 interface LoginParams {
-  uAccount: string;
-  uPwd: string;
+  account: string;
+  pwd: string;
 }
 
 const LoginPage: React.FC = () => {
@@ -25,7 +30,7 @@ const LoginPage: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const { token, user } = await login(values.uAccount.trim(), values.uPwd);
+      const { token, user } = await login(values.account.trim(), values.pwd);
       let currentUser = user;
       // LoginVO 没带用户信息时兜底拉一次 /auth/me
       if (!currentUser) {
@@ -35,13 +40,14 @@ const LoginPage: React.FC = () => {
       localStorage.setItem('token', token);
       cacheUser(currentUser);
       await setInitialState({ token, currentUser });
-
-      // §5.1/§5.2：带 ?redirect= 回跳（只允许站内路径，防开放重定向）
-      const redirect = (history.location as any)?.query?.redirect as
-        | string
-        | undefined;
+      // §5.1/§5.2：带 ?redirect= 回跳（umi4 无 location.query，从 search 解析）
+      const redirect =
+        new URLSearchParams(history.location.search).get('redirect') ??
+        undefined;
       history.replace(
-        redirect && redirect.startsWith('/') ? redirect : '/welcome',
+        redirect?.startsWith('/') && !redirect.startsWith('//')
+          ? redirect
+          : '/welcome',
       );
     } catch (e: any) {
       setError(e?.message || '登录失败，请稍后重试');
@@ -87,14 +93,14 @@ const LoginPage: React.FC = () => {
           <Alert
             type="error"
             showIcon
-            title={error}
+            message={error}
             style={{ marginBottom: 20 }}
           />
         )}
 
         <Form form={form} onFinish={handleFinish} autoComplete="off">
           <Form.Item
-            name="uAccount"
+            name="account"
             rules={[{ required: true, message: '请输入账号' }]}
           >
             <Input
@@ -105,7 +111,7 @@ const LoginPage: React.FC = () => {
             />
           </Form.Item>
           <Form.Item
-            name="uPwd"
+            name="pwd"
             rules={[{ required: true, message: '请输入密码' }]}
           >
             <Input.Password

@@ -61,23 +61,37 @@ const gotoLoginWithRedirect = () => {
 
 export async function getInitialState(): Promise<InitialState> {
   const token = localStorage.getItem('token') || undefined;
+
+  // ① 无 token → 去登录页（带 redirect 回跳）
   if (!token) {
     if (!onLoginPage()) gotoLoginWithRedirect();
     return {};
   }
+  // ② 已在登录页 → 不校验
   if (onLoginPage()) return {};
-  const cached = getCachedUser();
+
+  // ③ 有 token → 向后端校验会话
   try {
-    const currentUser = (await fetchCurrentUser(token)) ?? cached;
-    cacheUser(currentUser);
+    const currentUser = await fetchCurrentUser(token);
     if (!currentUser) {
+      // ★ 变更 2026-10-14 二-6：后端对「用户已被物理删除」的残留 token 静默返回 null。
+      //   必须与 401 同等处理：清登录态 + 跳登录。
+      //   旧写法 `?? cached` 会用本地缓存把 null 盖掉 → 已删用户带死 token 继续用。
       clearAuth();
-      history.replace('/login');
+      gotoLoginWithRedirect(); // 带 ?redirect=，与 handle401 同口径
       return {};
     }
+    cacheUser(currentUser);
     return { token, currentUser };
   } catch {
-    return { token, currentUser: cached };
+    // ④ 请求本身抛错（网络抖动/后端暂不可用；401 已由 errorConfig.errorHandler
+    //    → handle401() 处理）：降级用本地缓存维持界面，不因网络问题踢人
+    const cached = getCachedUser();
+    if (cached) return { token, currentUser: cached };
+    // 连缓存都没有 = 等效无登录态
+    clearAuth();
+    gotoLoginWithRedirect();
+    return {};
   }
 }
 
@@ -86,10 +100,8 @@ export const request: RequestConfig = {
     (url: string, options: any) => {
       const token = localStorage.getItem('token');
       if (token) {
-        options.headers = {
-          ...options.headers,
-          Authorization: `Bearer ${token}`,
-        };
+        // 后端契约：Authorization 为裸 token，无 Bearer 前缀（与 services/auth 的 bizRequest 一致）
+        options.headers = { ...options.headers, Authorization: token };
       }
       return { url, options };
     },
@@ -198,7 +210,7 @@ const GlobalHeader: React.FC<{ user: any }> = ({ user }) => (
             }
             if (key === 'logout') {
               const token = localStorage.getItem('token');
-              if (token) logoutApi(token).catch(() => {});
+              if (token) logoutApi().catch(() => {});
               clearAuth();
               localStorage.removeItem(TABS_STORAGE_KEY);
               history.replace('/login');
@@ -252,7 +264,7 @@ const buildMenuItems = (list: RouteItem[]): ItemType[] =>
           children: buildMenuItems(r.routes),
         };
       }
-      return { key: r.path!, icon: iconOf(r.icon), label: r.name };
+      return { key: r.path ?? '', icon: iconOf(r.icon), label: r.name };
     });
 
 const SIDE_MENU_ITEMS = buildMenuItems(routes);
@@ -449,7 +461,7 @@ export const layout: RunTimeLayoutConfig = ({ initialState }) => {
   const siderW = collapsed ? COLLAPSED_WIDTH : SIDER_WIDTH;
 
   return {
-    title: '毒麻精药品追溯管理平台',
+    title: '麻精药品追溯管理平台',
     layout: 'side',
     fixSiderbar: true,
     fixedHeader: false,
@@ -474,7 +486,8 @@ export const layout: RunTimeLayoutConfig = ({ initialState }) => {
           transition: 'margin-left 0.2s, width 0.2s',
         },
     onPageChange: () => {
-      if (!user && !onLoginPage()) gotoLoginWithRedirect();
+      const hasToken = !!localStorage.getItem('token');
+      if (!hasToken && !onLoginPage()) gotoLoginWithRedirect();
     },
     childrenRender: (children) =>
       onLoginPage() ? (

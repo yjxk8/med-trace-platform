@@ -1,6 +1,7 @@
 // src/utils/icon.ts
 import {
   ApartmentOutlined,
+  AppstoreOutlined,
   BarChartOutlined,
   BookOutlined,
   DatabaseOutlined,
@@ -10,6 +11,7 @@ import {
   IdcardOutlined,
   LinkOutlined,
   MedicineBoxOutlined,
+  MenuOutlined,
   ProfileOutlined,
   QrcodeOutlined,
   SearchOutlined,
@@ -39,9 +41,11 @@ export const MENU_ICON_MAP: Record<string, any> = {
   QrcodeOutlined,
   SearchOutlined,
   ExperimentOutlined,
+  MenuOutlined,
   UserOutlined,
   BarChartOutlined,
   ApartmentOutlined,
   TeamOutlined,
   SettingOutlined,
+  AppstoreOutlined,
 };

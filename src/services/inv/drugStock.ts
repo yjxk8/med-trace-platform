@@ -12,8 +12,9 @@
 // ==================== 通用类型别名 ====================
 
 /** LocalDateTime 的 JSON 形态：2025-12-01T10:30:00（ISO 带 T，库存主表用） */
-import { bizRequest } from '../auth';
-import { getMiId } from '../tenant';
+import { bizRequest } from '@/services/auth';       // R4
+import { getMiIdRequired } from '@/services/tenant'; // R3
+import type { IPage } from '@/utils/types';          // R1
 
 export type DateTimeISO = string;
 
@@ -195,19 +196,6 @@ export interface DrugStockStats {
   medicineBoxRecordCount: number;
 }
 
-// ==================== 分页结构（裸返 IPage） ====================
-
-/**
- * 分页裸返：核心五键 records/total/size/current/pages
- * 可能附带 orders 等冗余键，忽略即可（实际响应多余键不影响 TS 结构类型）
- */
-export interface IPage<T> {
-  records: T[];
-  total: number;
-  size: number;
-  current: number;
-  pages: number;
-}
 // ==================== API 层（基于 bizRequest，裸返直透） ====================
 
 /**
@@ -215,7 +203,7 @@ export interface IPage<T> {
  * 对应后端 B 方案守卫（500「租户ID不能为空」），提前一层拦截省一次往返
  */
 function assertMiId(): number {
-  const miId = getMiId();
+  const miId = getMiIdRequired();
   if (miId === undefined || miId === null) {
     throw new Error('租户ID不能为空（前端拦截）');
   }
@@ -257,13 +245,7 @@ export async function getDrugStockDetail(id: number | string): Promise<DrugStock
   });
 }
 /** 分组分页响应（IPage 结构，§2.4）：total = 组数 */
-export interface DrugStockGroupPage {
-  records: DrugStockGroupVO[];
-  total: number;
-  size: number;
-  current: number;
-  pages: number;
-}
+export type DrugStockGroupPage = IPage<DrugStockGroupVO>;
 
 /** 分组 VO（§2.3，16 字段）——组头汇总一律直绑本类型字段，前端禁止重算 */
 export interface DrugStockGroupVO {

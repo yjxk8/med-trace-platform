@@ -9,3 +9,8 @@ const PLACEHOLDER_MI_ID = 12;
 export function getMiId(): number {
   return PLACEHOLDER_MI_ID;
 }
+export function getMiIdRequired(): number {
+  const miId = getMiId();
+  if (miId == null) throw new Error('未获取到机构ID（miId），请重新登录');
+  return miId;
+}

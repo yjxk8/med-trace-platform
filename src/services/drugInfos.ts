@@ -128,14 +128,14 @@ export async function getDrugDetail(id: number): Promise<DrugInfosItem> {
 }
 
 /** 新增：POST 根路径，无 /create 后缀（铁律⑤）。当前页面无新增入口，保留供其他调用方 */
-export async function saveDrug(data: Record<string, any>): Promise<any> {
+export async function saveDrug(data: Record<string, any>): Promise<{ id: number; message: string }> {
   return bizRequest('/api/drug-infos', { method: 'POST', data });
 }
 
 /** 修改：miId + 同步字段后端锁定；成功裸返 */
 export async function updateDrug(
   data: Record<string, any> & { id: number },
-): Promise<any> {
+):Promise<{ message: string }> {
   return bizRequest('/api/drug-infos', { method: 'PUT', data });
 }
 
@@ -143,7 +143,7 @@ export async function updateDrug(
 export async function setDrugUseStatus(
   id: number,
   status: 0 | 1,
-): Promise<void> {
+): Promise<{ message: string }> {
   return bizRequest(`/api/drug-infos/${id}/use-status`, {
     method: 'PUT',
     params: { status },
@@ -151,6 +151,6 @@ export async function setDrugUseStatus(
 }
 
 /** 作废（软删，详情仍可见） */
-export async function voidDrug(id: number): Promise<void> {
+export async function voidDrug(id: number): Promise<{ message: string }> {
   return bizRequest(`/api/drug-infos/${id}`, { method: 'DELETE' });
 }

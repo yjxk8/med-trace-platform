@@ -155,11 +155,36 @@ export const routes: RouteItem[] = [
         component: './Dept',
       },
       {
+        path: '/system/menu',
+        name: '菜单管理',
+        icon: 'MenuOutlined',
+        component: './Menu',
+      },
+      {
         path: '/user',
         name: '用户管理',
         icon: 'TeamOutlined',
-        component: './Placeholder',
+        component: './User',
       },
+      {
+        path: '/dict',
+        name: '字典管理',
+        icon: 'AppstoreOutlined',
+        component: './Dict',
+      },
+      {
+        path: '/org/mi',
+        name: '机构管理',
+        icon: 'BankOutlined',
+        component: './Mi',
+      },
+      {
+        path: '/mi-config',
+        name: '机构参数配置',
+        icon: 'ControlOutlined',
+        component: './MiConfig',
+      },
+
       {
         path: '/system',
         name: '系统设置',

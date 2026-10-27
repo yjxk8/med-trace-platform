@@ -1,15 +1,26 @@
+/**
+ * 认证/请求基座 —— 契约：后端变更说明-用户管理-v3.md（终版）§二/§3.1
+ * v3 变更：① 登录 body uAccount/uPwd → account/pwd；
+ *         ② token 一律 Authorization 头（裸 token），query/body 传 token 全部废除（logout/me/password）；
+ *         ③ CurrentUser 字段随 UserListVO 改为 id/account/name/type/miId...
+ * 保留：401 防抖跳登录、裸类型透传 + {code,message} 兜底、用户本地缓存
+ */
 import { history, request } from '@umijs/max';
 
-/** 当前用户（按 t_user 宽松声明，避免后端字段微调导致编译失败） */
+/** 当前用户（v3 新契约 key；[key: string]: any 容忍后端加字段） */
 export interface CurrentUser {
-  uId?: number | string;
-  uAccount?: string;
-  uName?: string;
-  uRole?: string;
+  id?: number | string;
+  account?: string;
+  name?: string;
+  type?: string | number;
+  miId?: number | null;
+  tenantType?: string | number;
+  status?: string | number;
+  loginStatus?: string | number;
   [key: string]: any;
 }
 
-/** 登录返回 LoginVO：裸对象，token 必有，用户信息字段位置后端可能调整 */
+/** 登录返回 LoginVO：裸对象 {token, user}（唯一免鉴权端点） */
 export interface LoginResult {
   token: string;
   user?: CurrentUser;
@@ -50,18 +61,13 @@ export function handle401() {
   if (!pathname.startsWith('/login')) {
     history.replace(`/login?redirect=${encodeURIComponent(pathname + search)}`);
   }
-  // 跳转完成后释放，允许下一次真实过期再次触发
   setTimeout(() => {
     redirecting = false;
   }, 800);
 }
 
-/* ───── 响应处理（对齐后端对接文档 §四/§5.1） ─────
- * - 成功：HTTP 200 裸数据（无 {code,data} 包装）→ 直接透传
- * - 业务异常兜底：HTTP 200 + {code!=200, message} → 抛 Error(message)
- * - 拦截器 401：HTTP 401 + {code:401,message} → 清态 + 带 redirect 跳登录（防抖）
- * - 业务 500：HTTP 500 + {code:500,message} → 抛 Error(message)
- */
+/* ───── 响应处理（v3 §二：成功裸类型直传；500 {code,message} 抛原文；401 清态跳登录） ───── */
+
 async function unwrap<T>(p: Promise<any>): Promise<T> {
   let body: any;
   try {
@@ -92,63 +98,52 @@ export async function bizRequest<T = any>(url: string, options?: any): Promise<T
   return unwrap<T>(request(url, options));
 }
 
-/* ───── 认证接口 ───── */
+/* ───── 认证接口（v3 §3.1 终版） ───── */
 
-/** 登录：POST /auth/login body{uAccount,uPwd} → 裸 LoginVO（白名单接口，无需 token） */
-export async function login(uAccount: string, uPwd: string): Promise<LoginResult> {
+/** 登录：POST /auth/login body{account,pwd}（v3 反转：uAccount/uPwd 作废）→ 裸 {token,user} */
+export async function login(account: string, pwd: string): Promise<LoginResult> {
   const body = await unwrap<any>(
-    request('/api/auth/login', { method: 'POST', data: { uAccount, uPwd } }),
+    request('/api/auth/login', { method: 'POST', data: { account, pwd } }),
   );
   const token = body?.token;
   if (!token) throw new Error('登录响应异常：未返回 token');
-  // 用户信息字段位置防御性提取（user / userInfo / data.user）
   const user: CurrentUser | undefined =
     body?.user ?? body?.userInfo ?? body?.data?.user ?? undefined;
   return { token, user };
 }
 
-/**
- * 登出：POST /auth/logout?token=xxx
- * 对接文档 §5.2：无论成功或 401 都由调用方本地清理，这里静默吞掉所有错误，
- * 绝不触发 handle401（退出登录不需要 redirect 逻辑）
- */
-export async function logout(token: string): Promise<void> {
+/** 登出：POST /auth/logout（幂等）。v3 §二：token 仅走 Authorization 头（拦截器注入），不收任何参数 */
+export async function logout(): Promise<void> {
   try {
-    await request('/api/auth/logout', { method: 'POST', params: { token } });
+    await request('/api/auth/logout', { method: 'POST' });
   } catch {
-    /* 静默：401/网络错误均忽略 */
+    /* 静默：401/网络错误均忽略；本地清理由调用方完成 */
   }
 }
 
 /**
- * 当前用户：GET /auth/me
- * token 走 Authorization 头（全局拦截器自动附加）；query 里再带一份兼容旧 service
- * 拦截器上线后：过期 token 直接 401（不再返回 {user:null}）
+ * 当前用户：GET /auth/me → {"user": UserListVO | null}
+ * v3 §二：user=null = 未登录/过期/账号已删除 → 调用方按 401 同等处理（清 token 跳登录）
+ * token 通道：入参显式带（登录页 localStorage 尚未落 token 的兜底场景）或全局拦截器注入，均走头
  */
 export async function fetchCurrentUser(token?: string): Promise<CurrentUser | null> {
   const body = await unwrap<any>(
-    request('/api/auth/me', { method: 'GET', params: token ? { token } : undefined }),
+    request('/api/auth/me', {
+      method: 'GET',
+      ...(token ? { headers: { Authorization: token } } : {}),
+    }),
   );
-  if (body?.user !== undefined) return body.user;
-  // 兼容裸 user 对象
-  if (body && (body.uId ?? body.uAccount)) return body as CurrentUser;
+  if (body?.user !== undefined) return body.user; // {"user":null} → null（含已删用户）
+  if (body && (body.id ?? body.account)) return body as CurrentUser; // 兼容裸 user 对象
   return null;
 }
 
-/**
- * 修改密码：PUT /auth/password
- * 对接文档 §5.3 token 双发：header 一份（全局拦截器自动附加，给拦截器）+
- * body 一份（现有后端 service 从 body 取，历史约定）
- */
-export async function changePassword(p: {
-  token: string;
-  oldPwd: string;
-  newPwd: string;
-}): Promise<void> {
+/** 修改密码：PUT /auth/password body{oldPwd,newPwd}（newPwd ≥6）；token 仅走 Authorization 头 */
+export async function changePassword(p: { oldPwd: string; newPwd: string }): Promise<void> {
   await unwrap(
     request('/api/auth/password', {
       method: 'PUT',
-      data: { token: p.token, oldPwd: p.oldPwd, newPwd: p.newPwd },
+      data: { oldPwd: p.oldPwd, newPwd: p.newPwd },
     }),
   );
 }

@@ -1,5 +1,5 @@
 import { bizRequest } from '@/services/auth';
-import { getMiId } from './tenant';
+import { getMiIdRequired } from '@/services/tenant';
 /** 部门树节点（对应后端 DeptTreeVO） */
 export type DeptTreeNode = {
   id: number;
@@ -84,7 +84,7 @@ export function buildPharmacyOptions(
 let pharmacyCache: Promise<{ label: string; value: string }[]> | null = null;
 
 export function listPharmacyOptions(): Promise<{ label: string; value: string }[]> {
-  pharmacyCache ??= getDeptTree({ miId: getMiId(), deptStatus: 1 })
+  pharmacyCache ??= getDeptTree({ miId: getMiIdRequired(), deptStatus: 1 })
     .then(buildPharmacyOptions)
     .catch((e) => {
       pharmacyCache = null; // 失败自动失效，下次进页面重拉
