@@ -1,11 +1,10 @@
-/**
- * @see https://umijs.org/docs/max/access#access
- * */
-export default function access(
-  initialState: { currentUser?: API.CurrentUser } | undefined,
-) {
-  const { currentUser } = initialState ?? {};
+import type { InitialState } from '@/app';
+export default (initialState: InitialState) => {
+  const p = initialState?.perm;
   return {
-    canAdmin: currentUser && currentUser.access === 'admin',
+    login: !!initialState?.token,
+    admin: !!p?.isAdmin,
+    adminType1: p?.isAdmin && p?.adminType === 1,
+    normal: !p?.isAdmin,
   };
-}
+};

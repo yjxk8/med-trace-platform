@@ -1,16 +1,16 @@
 /**
- * 分配菜单弹窗（可拖拽 + 左树右已选面板 · lint 修复版）
- * lint 修复：
- *  ① useIterableCallbackReturn——10 处 forEach 隐式返回改为块级语句（无行为变化）；
- *  ② useJsxKeyInIterable——树节点 <Tooltip> 补 key={String(n.id)}。
- * 保留：DraggableModal 拖拽 / 三页签（平台/销毁柜/PDA）/ 右侧已选权限实时面板（可点移除）/
- *      String 归一化回显 / deriveCheckSets 推导 / 停用置灰禁勾选 / 覆盖确认（含摘要）/
- *      assignMenus 不走 cleanPayload（[] = 清空）
- * 【待后端：BE-ROLE-OPT-03】/menu/tree 不传 status 应返回含停用全量树
- * 【待后端：BE-ROLE-OPT-04】menuIds 提交/回显全量口径（含父级）
- * 【待后端：BE-ROLE-OPT-10】回显纯 id 数组且 id 类型与树一致
- * 【待后端：BE-ROLE-OPT-11】clientType 枚举（1平台/2销毁柜/3PDA）与回显跨端口径
- * 【待后端：BE-ROLE-OPT-12】列表页只读「查看权限」入口（二期）
+ * 分配菜单弹窗（可拖拽 + 三端页签 + 左树右已选面板）—— 契约：角色管理 v1.0 §2.2/§6.4/§7
+ * 当前态（M1~M3 全量闭环）：
+ *  ① 三页签（平台/销毁柜/PDA）按 clientType 独立加载菜单树与勾选/展开态（OPT-11 闭环：
+ *     枚举 1平台/2销毁柜/3PDA，回显为跨端全量 id）；
+ *  ② /menu/tree 不传 status 返回含停用全量树 → 停用节点置灰禁勾选 + Tooltip（OPT-03 闭环）；
+ *  ③ 提交/回显全量口径：三端各自 checked ∪ half ∪ full ∪ 树外保留（OPT-04 闭环）；
+ *  ④ 回显 number[] 纯 id 数组；String 归一化比对 + 三形态兼容层（OPT-10 闭环，兼容层保留
+ *     至下迭代清理）；id 类型与树一致。
+ * 交互：默认展开一级 + 展开/折叠全部 / 工具条（搜索·全选·全不选·一键清空·已选计数）/
+ *      右侧已选面板实时联动（点击 Tag 可移除）/ 覆盖确认含摘要 / 保存失败确认框保持开启 /
+ *      assignMenus 不走 cleanPayload（[] = 清空，严禁洗成 null）
+ * 二期预留：OPT-12 列表页只读「查看权限」抽屉
  */
 import {
   AppstoreOutlined,
@@ -50,12 +50,11 @@ interface Props {
   onSaved: () => void;
 }
 
-/** 应用页签 × clientType 映射（枚举值以 services/org/menu.ts 的 CLIENT_TYPE 为准）
- *  销毁柜/PDA 字面量【待后端：BE-ROLE-OPT-11】 */
+/** 应用页签 × clientType 映射（枚举值以 services/org/menu.ts 的 CLIENT_TYPE 为准，已与后端对齐） */
 const CLIENT_TABS: { key: number; label: string }[] = [
   { key: CLIENT_TYPE.WEB, label: '平台应用' },
-  { key: 2, label: '销毁柜应用' },
-  { key: 3, label: 'PDA应用' },
+  { key: CLIENT_TYPE.CABINET, label: '销毁柜应用' },
+  { key: CLIENT_TYPE.PDA, label: 'PDA应用' },
 ];
 
 /** 树外历史授权分组 key（不属于任何一端树内） */
@@ -66,8 +65,9 @@ async function safeGetTree(clientType: number): Promise<MenuTreeVO[]> {
   try {
     return (await getMenuTree({ clientType })) ?? [];
   } catch (e) {
+    // 调整：诊断文案去掉编号，改为可直接行动的提示
     console.warn(
-      `[AssignMenuModal] clientType=${clientType} 菜单树加载失败（BE-ROLE-OPT-11）：`,
+      `[AssignMenuModal] clientType=${clientType} 菜单树加载失败，该页签将显示为空：`,
       e,
     );
     return [];
@@ -120,7 +120,8 @@ function collectDisabledIdStrs(
   return acc;
 }
 
-/** 回显 id 归一化：兼容 number[] / string[] / {menuId|id} 对象数组 */
+/** 回显 id 归一化：兼容 number[] / string[] / {menuId|id} 对象数组
+ *  （OPT-10 已定稿 number[]；兼容层无害，按下迭代清理计划保留） */
 function toGrantedIdStrSet(raw: unknown): Set<string> {
   const out = new Set<string>();
   if (!Array.isArray(raw)) return out;
@@ -137,8 +138,7 @@ function toGrantedIdStrSet(raw: unknown): Set<string> {
   return out;
 }
 
-/** 由 checkedKeys 反推半选/全选父级（程序化改勾选不触发 onCheck）
- *  lint 修复：forEach 回调改块级语句 */
+/** 由 checkedKeys 反推半选/全选父级（程序化改勾选不触发 onCheck，需自行推导） */
 function deriveCheckSets(
   nodes: MenuTreeVO[],
   checkedSet: Set<string>,
@@ -179,8 +179,7 @@ function filterTreeNodes(nodes: MenuTreeVO[], kw: string): MenuTreeVO[] {
   return res;
 }
 
-/** 菜单树 → Tree DataNode：key 统一 String + 图标 + 类型标识 + 停用置灰禁勾选
- *  lint 修复：<Tooltip> 补 key（useJsxKeyInIterable） */
+/** 菜单树 → Tree DataNode：key 统一 String + 图标 + 类型标识 + 停用置灰禁勾选 */
 function toTreeData(nodes: MenuTreeVO[]): DataNode[] {
   return nodes.map((n) => {
     const mt = String(n.menuType ?? MENU_TYPE.MENU);
@@ -277,8 +276,9 @@ export default function AssignMenuModal({
     Promise.all([
       ...CLIENT_TABS.map((t) => safeGetTree(t.key)),
       getRoleMenuIds(role.id).catch((e) => {
+        // 调整：诊断文案可直接行动
         console.warn(
-          '[AssignMenuModal] /role/{id}/menus 回显失败（BE-ROLE-OPT-10）：',
+          '[AssignMenuModal] 已授权菜单回显失败，本次打开将无回显，请检查接口：',
           e,
         );
         return [] as unknown[];
@@ -291,12 +291,11 @@ export default function AssignMenuModal({
         const granted = toGrantedIdStrSet(echo);
         if (!granted.size) {
           console.warn(
-            '[AssignMenuModal] /role/{id}/menus 回显为空或结构未识别，原始返回：',
+            '[AssignMenuModal] 已授权回显为空或结构未识别，原始返回：',
             echo,
-            '——请核对接口实现与授权落库（BE-ROLE-OPT-10）',
+            '——若该角色应已有授权，请核对 /role/{id}/menus 实现与授权落库',
           );
         }
-        // lint 修复：forEach 改块级语句
         const allTreeIds = new Set<string>();
         treeList.forEach((t) => {
           collectAllIdStrs(t, allTreeIds);
@@ -316,14 +315,12 @@ export default function AssignMenuModal({
         CLIENT_TABS.forEach((t, i) => {
           const checked = new Set<string>(nextChecked[t.key] ?? []);
           if (!treeList[i].length) {
-            // lint 修复：forEach 改块级语句
             checked.forEach((k) => {
               baseline.add(k);
             });
             return;
           }
           const { half, full } = deriveCheckSets(treeList[i], checked);
-          // lint 修复：forEach 改块级语句
           checked.forEach((k) => {
             baseline.add(k);
           });
@@ -375,14 +372,15 @@ export default function AssignMenuModal({
     [kw, filteredTree, expandedMap, activeTab],
   );
 
-  /** 提交口径：三端 checked ∪ half ∪ full ∪ preserved（全量）【待后端：BE-ROLE-OPT-04】
-   *  lint 修复：forEach 改块级语句 */
+  /** 提交口径：三端 checked ∪ half ∪ full ∪ preserved（全量，OPT-04 闭环）
+   *  String 归一去重后 Number 化提交（契约 menuIds: number[]） */
   const buildProposedIds = (): number[] => {
     const all = new Set<string>([...preserved]);
     CLIENT_TABS.forEach((t) => {
       const tree = trees[t.key] ?? [];
       const checked = new Set<string>((checkedMap[t.key] ?? []).map(String));
       if (!tree.length) {
+        // 该端树为空：已勾选 key 原样保留，防丢授权
         checked.forEach((k) => {
           all.add(k);
         });
@@ -399,7 +397,6 @@ export default function AssignMenuModal({
         all.add(k);
       });
     });
-    // String 归一去重后 Number 化提交；雪花 id 全局 Long→String 时需同步改 string（BE-ROLE-OPT-10）
     return Array.from(all).map(Number);
   };
 
@@ -524,7 +521,9 @@ export default function AssignMenuModal({
       message.success(res?.message || '授权成功');
       onSaved();
     } catch (e) {
-      message.error((e as Error).message); // 失败透传且不关闭
+      message.error((e as Error).message); // 失败透传
+      // 调整：rejection 抛回 Modal.confirm（antd 捕获）→ 覆盖确认保持开启，失败不关闭
+      throw e;
     } finally {
       setSaving(false);
     }
@@ -608,7 +607,7 @@ export default function AssignMenuModal({
               {treeData.length > 0 ? (
                 <Tree
                   checkable
-                  checkStrictly={false} // 级联勾选【待后端：BE-ROLE-OPT-04】
+                  checkStrictly={false} // 级联勾选（全量口径已与后端对齐，OPT-04 闭环）
                   selectable={false}
                   expandedKeys={displayExpanded}
                   onExpand={(keys) => {
@@ -629,8 +628,7 @@ export default function AssignMenuModal({
                   >
                     {`${CLIENT_TABS.find((t) => t.key === activeTab)?.label ?? ''}暂无菜单数据`}
                     <div style={{ fontSize: 12, marginTop: 8 }}>
-                      若各应用页签均为空，请核对菜单模块 clientType
-                      枚举（BE-ROLE-OPT-11）
+                      请检查菜单数据与 clientType 枚举配置
                     </div>
                   </div>
                 )
