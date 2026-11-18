@@ -1,9 +1,15 @@
 /**
  * 角色管理 共享渲染/选项 —— 契约：角色管理 v1.0 §6.2 枚举
- * 红线：枚举一律 String() 归一化比较（对齐菜单模块 shared.tsx）
+ * 本轮新增（OPT-01 配套）：ROLE_STATUS_OPTIONS + renderRoleStatus
+ * 红线：枚举一律 String() 归一化比较（S()）
  */
 import { Tag } from 'antd';
-import { DATA_SCOPE, ROLE_SCOPE, ROLE_TYPE } from '@/services/org/role';
+import {
+  DATA_SCOPE,
+  ROLE_SCOPE,
+  ROLE_STATUS,
+  ROLE_TYPE,
+} from '@/services/org/role';
 
 const S = (v: string | number | null | undefined) => String(v ?? '');
 
@@ -24,6 +30,12 @@ export const ROLE_SCOPE_OPTIONS = [
   { value: ROLE_SCOPE.NORMAL, label: '普通角色' },
 ];
 
+/** 角色状态【OPT-01 已联调】：正常=success 绿 / 停用=default 灰（对齐 valueEnum 口径） */
+export const ROLE_STATUS_OPTIONS = [
+  { value: ROLE_STATUS.NORMAL, label: '正常' },
+  { value: ROLE_STATUS.DISABLED, label: '停用' },
+];
+
 export function renderRoleType(v?: string | number | null) {
   const map: Record<string, { text: string; color: string }> = {
     [ROLE_TYPE.PLATFORM]: { text: '平台角色', color: 'geekblue' },
@@ -34,7 +46,7 @@ export function renderRoleType(v?: string | number | null) {
   return hit ? <Tag color={hit.color}>{hit.text}</Tag> : S(v) || '-';
 }
 
-/** dataScope：范围越大越敏感（区域监管账号可见麻精流通数据范围，二期联合合规组评审 §3） */
+/** dataScope：范围越大越敏感（二期合规扩展位，OPT-09 预留） */
 export function renderDataScope(v?: string | number | null) {
   const map: Record<string, { text: string; color: string }> = {
     [DATA_SCOPE.ALL]: { text: '全部数据权限', color: 'volcano' },
@@ -52,4 +64,13 @@ export function renderRoleScope(v?: string | number | null) {
   };
   const hit = map[S(v)];
   return hit ? <Tag color={hit.color}>{hit.text}</Tag> : S(v) || '-';
+}
+
+/** 状态渲染【OPT-01 已联调】：status 缺省按正常兜底（新增字段 default 1） */
+export function renderRoleStatus(v?: string | number | null) {
+  return S(v) === String(ROLE_STATUS.DISABLED) ? (
+    <Tag>停用</Tag>
+  ) : (
+    <Tag color="success">正常</Tag>
+  );
 }

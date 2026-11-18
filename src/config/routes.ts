@@ -15,13 +15,18 @@ export interface RouteItem {
 export const routes: RouteItem[] = [
   { path: '/', redirect: '/welcome' },
   { path: '/login', name: '登录', layout: false, component: './Login' },
+  // ★2026-11-17 强制改密页:★不走 layout:false——路由仍进布局,改密闸门由
+  // app.tsx layout.childrenRender 渲染级接管(loginStatus=3 时菜单不渲染、
+  // children 一律替换为改密表单,业务组件不挂载零请求,换 URL 绕不过);
+  // 不写 name(不进静态菜单);非改密期直接访问时由组件自身守卫送回 /
+  { path: '/force-change-pwd', component: './User/ForceChangePwd' },
+  { path: '/org-select', component: '@/pages/orgSelect' },
   {
     path: '/welcome',
     name: '首页',
     icon: 'HomeOutlined',
     component: './Welcome',
   },
-
   // ===== 药事管理 =====
   {
     name: '药事管理',
@@ -48,7 +53,6 @@ export const routes: RouteItem[] = [
       },
     ],
   },
-
   // ===== 业务办理 =====
   {
     name: '业务办理',
@@ -75,7 +79,6 @@ export const routes: RouteItem[] = [
       },
     ],
   },
-
   // ===== 三级药库 =====
   {
     name: '三级药库',
@@ -120,7 +123,6 @@ export const routes: RouteItem[] = [
       },
     ],
   },
-
   // ===== 溯源与统计 =====
   {
     name: '溯源与统计',
@@ -141,7 +143,6 @@ export const routes: RouteItem[] = [
       },
     ],
   },
-
   // ===== 系统管理 =====
   {
     name: '系统管理',
@@ -160,6 +161,28 @@ export const routes: RouteItem[] = [
         icon: 'MenuOutlined',
         component: './Menu',
       },
+      {
+        path: '/org/user-group',
+        name: '用户组管理',
+        icon: 'TeamOutlined',
+        component: './UserGroup',
+      },
+      // ↓ 占位路由（P0.5/P1 交付后替换 component），与列表页同级并列
+      {
+        path: '/org/compliance/confirm',
+        name: '合规确认待办',
+        component: './UserGroup/ComplianceConfirm',
+      },
+      {
+        path: '/org/audit/auth',
+        name: '授权审计',
+        component: './UserGroup/AuditAuth',
+      },
+      {
+        path: '/org/perm-template',
+        name: '权限模板',
+        component: './UserGroup/placeholder',
+      }, // P1 保留占位
       {
         path: '/system/role',
         name: '角色管理',
@@ -190,7 +213,6 @@ export const routes: RouteItem[] = [
         icon: 'ControlOutlined',
         component: './MiConfig',
       },
-
       {
         path: '/system',
         name: '系统设置',
