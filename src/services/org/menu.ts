@@ -16,7 +16,7 @@ import { cleanPayload } from '@/utils/payload'; // R2：唯一来源（本模块
 /** menuType：0目录 1菜单(默认) 2按钮；⚠️ 有 0 值，表单按类型联动（§6.4） */
 export const MENU_TYPE = { DIR: '0', MENU: '1', BUTTON: '2' } as const;
 /** clientType：行级 1平台Web(默认) 2销毁柜 3PDA移动端；⚠️ 同一目录树下需一致维护，否则按端过滤断枝（§6.2） */
-export const CLIENT_TYPE = { WEB: '1', CABINET: '2', PDA: '3' } as const;
+export const CLIENT_TYPE = { WEB: 1, CABINET: 2, PDA: 3 } as const;
 /** status：1正常 2停用（v2 文案变更，值不变；默认1） */
 export const MENU_STATUS = { NORMAL: '1', DISABLED: '2' } as const;
 /** isVisible：1是 2否（默认1） */

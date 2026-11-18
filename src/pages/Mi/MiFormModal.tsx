@@ -87,7 +87,13 @@ export default function MiFormModal({
   }, [open, editing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async () => {
-    const v = await form.validateFields();
+    // ★A7 加固：校验失败静默返回（行内红字已提示），不再产生 unhandled rejection
+    let v: any;
+    try {
+      v = await form.validateFields();
+    } catch {
+      return;
+    }
     setSaving(true);
     try {
       if (isEdit && editing) {
@@ -131,6 +137,9 @@ export default function MiFormModal({
         message.success(res?.message || '创建成功');
       }
       onSaved();
+    } catch (e) {
+      // ★A7 后端原文透传（如「统一社会信用代码已存在」）；外层受控 open，弹窗保持开启
+      message.error((e as Error).message);
     } finally {
       setSaving(false);
     }
@@ -143,7 +152,7 @@ export default function MiFormModal({
       onOk={submit}
       confirmLoading={saving}
       onCancel={onClose}
-      destroyOnClose
+      destroyOnHidden // ★A10 原 destroyOnClose 在 antd 6 已移除,静默失效
       width={1080}
       centered
       // 小屏保险丝：正常屏总高约 690px 不会触发；极端矮屏才内部滚动

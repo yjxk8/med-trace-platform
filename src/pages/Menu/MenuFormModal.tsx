@@ -1,14 +1,13 @@
 /**
  * 菜单新增/编辑弹窗 —— 契约：菜单管理 v2 §四/§五/§六
- * - menuType 联动矩阵（§6.4）：0目录(组件区隐藏) / 1菜单(component/componentName 必填*) / 2按钮(仅 name+perms+父级)
- *   *「建议必填」的前端强化实现，要放宽删对应 rules 即可
- * - isExternal 布尔封装（§6.3）：表单内布尔（Switch），提交 boolToExt / 回显 extToBool，禁止直接绑 0/1
- *   外链=true：routing 必填（镜像后端「外链菜单必须填写路由地址」）、externalTarget 显示、组件区隐藏
- * - clientType 继承（§6.2）：新增下级默认继承父节点 clientType（可改，extra 提示断枝风险）
- * - parentId 三态（§6.1）：编辑始终提交（MenuTreeSelect 恒有值）；0=顶级
- * - queryParam JSON 前置校验（文案对齐后端「路由默认参数不是合法的 JSON」）
- * - 编辑回显走 /menu/detail/{id}（children=null）；失败兜底行数据
- * - ⚠️ 后端 null 不更新：类型/外链切换后新隐藏字段（component 等）无法清空，底部有提示
+ * 本轮优化（对齐角色管理弹窗交互）：
+ *  ① 校验失败自动聚焦第一个错误字段（原 validateFields 拒绝后无处理，静默失败）；
+ *  ② 提交失败 message.error 透传且弹窗不关闭（原无 catch，接口报错无任何提示）；
+ *  ③ 提交按钮 loading + disabled 双防重复；okText 模式区分「创建/保存」；
+ *  ④ 有改动时关闭弹「未保存确认」，无改动直接关闭（savedRef 防保存后误弹）。
+ * 保留：menuType 联动矩阵（§6.4）/ isExternal 布尔封装（§6.3）/ clientType 继承（§6.2）/
+ *      parentId 三态（§6.1）/ queryParam JSON 前置校验 / detail 回显兜底行数据 /
+ *      编辑态「后端 null 不更新」底部提示
  */
 import {
   App,
@@ -16,12 +15,13 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Radio,
   Row,
   Select,
   Switch,
 } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DraggableModal from '@/components/DraggableModal';
 import MenuTreeSelect from '@/components/MenuTreeSelect';
 import {
@@ -57,6 +57,12 @@ interface Props {
   onClose: () => void;
   onSaved: () => void;
 }
+
+/** 表单值（isExternal 为布尔 §6.3；提交时经 boolToExt 转 0/1） */
+type MenuFormValues = Omit<MenuSaveDTO, 'isExternal'> & { isExternal: boolean };
+
+/** validateFields 拒绝结构（局部最小类型，避免 any） */
+type FormValidateError = { errorFields?: { name?: unknown }[] };
 
 const itemMb = { marginBottom: 10 } as const;
 const C2 = { span: 12 } as const;
@@ -104,9 +110,10 @@ export default function MenuFormModal({
   onClose,
   onSaved,
 }: Props) {
-  const { message } = App.useApp(); // ★ 修复：原文件用了 message 未引入
+  const { message } = App.useApp();
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const savedRef = useRef(false); // 优化：保存成功后关闭不弹「未保存确认」
   const isEdit = !!editing?.id;
 
   // §6.4 联动：menuType / isExternal 双观察
@@ -124,6 +131,7 @@ export default function MenuFormModal({
 
   useEffect(() => {
     if (!open) return;
+    savedRef.current = false; // 优化：每次打开重置保存标记
     form.resetFields();
     if (isEdit && editing) {
       // §6.5：回显必须走 detail（children=null，筛选态树节点数据可能不全）；失败兜底行数据
@@ -152,12 +160,42 @@ export default function MenuFormModal({
     }
   }, [open, editing, presetParentId, parentRow, defaultClientType]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** 优化：未保存确认——有改动弹确认，无改动直接关闭 */
+  const handleClose = () => {
+    if (savedRef.current || !form.isFieldsTouched()) {
+      onClose();
+      return;
+    }
+    Modal.confirm({
+      title: '未保存的修改',
+      content: '当前弹窗有未保存的修改，关闭后将丢失，确定关闭？',
+      okText: '丢弃并关闭',
+      okButtonProps: { danger: true },
+      cancelText: '继续编辑',
+      onOk: onClose,
+    });
+  };
+
   const submit = async () => {
-    const v = await form.validateFields();
+    let v: MenuFormValues;
+    try {
+      v = (await form.validateFields()) as MenuFormValues;
+    } catch (err) {
+      // 优化：校验失败自动聚焦第一个错误字段（原实现拒绝后静默）
+      const e = err as FormValidateError;
+      const names = e.errorFields?.[0]?.name as (string | number)[] | undefined;
+      const first = names?.[0];
+      if (first != null) {
+        form.scrollToField(first);
+        form.focusField?.(first);
+      }
+      return;
+    }
     setSaving(true);
     try {
       const vMt = String(v.menuType);
-      const vExt = !!v.isExternal; // 布尔 → 0/1 只在转换层发生（§6.3）
+      const vExt = !!v.isExternal;
+      // 布尔 → 0/1 只在转换层发生（§6.3）
       const payload: MenuSaveDTO = {
         parentId: v.parentId ?? 0, // §6.1：编辑始终提交（0=顶级）
         name: v.name,
@@ -188,24 +226,31 @@ export default function MenuFormModal({
       }
       if (isEdit && editing) {
         const res = await updateMenu({ id: editing.id, ...payload });
-        message.success(res?.message || '修改成功');
+        message.success(res?.message || '修改成功'); // 优化：模式区分成功提示
       } else {
         const res = await createMenu(payload);
         message.success(res?.message || '创建成功');
       }
+      savedRef.current = true;
       onSaved();
+    } catch (e) {
+      // 优化：失败透传且不关闭（原无 catch，接口报错静默无提示）
+      message.error((e as Error).message);
     } finally {
       setSaving(false);
     }
   };
 
   return (
+    // 优化：okText 模式区分 / confirmLoading + okButtonProps 双防重复 / onCancel 未保存确认
     <DraggableModal
       title={isEdit ? '编辑菜单' : '新增菜单'}
       open={open}
       onOk={submit}
       confirmLoading={saving}
-      onCancel={onClose}
+      okButtonProps={{ disabled: saving }}
+      okText={isEdit ? '保存' : '创建'}
+      onCancel={handleClose}
       destroyOnClose
       width={720}
       centered
@@ -456,7 +501,6 @@ export default function MenuFormModal({
         <Form.Item name="remark" style={{ marginBottom: 4 }}>
           <Input.TextArea rows={2} placeholder="备注，选填" maxLength={255} />
         </Form.Item>
-
         {isEdit && (
           <div style={{ color: '#999', fontSize: 12 }}>
             物理删除不可恢复（请用列表操作，且需先删子菜单）；类型/外链切换后新隐藏的字段无法清空（后端
