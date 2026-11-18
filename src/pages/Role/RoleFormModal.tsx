@@ -1,17 +1,17 @@
 /**
- * 角色新增/编辑弹窗（lint 修复版）—— 契约：角色管理 v1.0 §6.1/§6.4
- * lint 修复：noNonNullAssertion——去掉 editing!.code，code 回填移入
- *            if (isEdit && editing) 守卫内（TS 收窄后直接取 editing.code，无行为变化）
- * 保留优化：新增/编辑模式区分标题·按钮文案·成功提示 / code 编辑态锁定 /
- *      校验失败自动聚焦第一个错误字段 / 提交 loading+disabled 防重复 /
- *      未保存关闭二次确认 / Section 分区（基础信息/权限范围/其他）
- * 【待后端：BE-ROLE-OPT-05】code 锁定（4101）与 uk_mi_code 唯一冲突（4102）友好错误码
- * 【待后端：BE-ROLE-OPT-08】miId 由后端从登录态强制填充，前端不渲染不提交
+ * 角色新增/编辑弹窗 —— 契约：角色管理 v1.0 §6.1/§6.4
+ * 本轮变更（M3 配套）：
+ *  ① 4101/4102 错误码表单内联精准提示（OPT-05 已联调）：setFields 定位 code 字段 +
+ *    滚动聚焦，不打断填写；其余错误仍走全局 toast；
+ *  ② miId 说明更新：后端登录态强制填充（OPT-08 已闭环），前端不渲染不提交。
+ * 保留：新增/编辑模式区分 / code 编辑态锁定 / 校验失败聚焦首错 / 提交防重复 / 未保存确认 /
+ *      Section 分区（基础信息/权限范围/其他）
  */
 import { App, Col, Form, Input, InputNumber, Modal, Row, Select } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import DraggableModal from '@/components/DraggableModal';
 import {
+  type BizError,
   createRole,
   DATA_SCOPE,
   ROLE_SCOPE,
@@ -34,7 +34,7 @@ interface Props {
   onSaved: () => void;
 }
 
-/** 表单值（不含 id / miId——miId 后端登录态填充【待后端：BE-ROLE-OPT-08】） */
+/** 表单值（不含 id / miId——miId 后端登录态填充【OPT-08 已闭环】） */
 type RoleFormValues = Omit<RoleSaveDTO, 'id'>;
 
 /** validateFields 拒绝结构（局部最小类型，避免 any） */
@@ -135,8 +135,7 @@ export default function RoleFormModal({
     }
     setSaving(true);
     try {
-      // lint 修复：payload 统一按新增形态构建（code 取表单值），
-      // 编辑态的 code 锁定回填移入下方守卫内（TS 收窄后取 editing.code，替代 editing!.code）
+      // payload 统一按新增形态构建；编辑态在守卫内强制回填原 code（disabled 丢值双保险）
       const payload: RoleSaveDTO = {
         name: v.name,
         code: v.code,
@@ -145,11 +144,10 @@ export default function RoleFormModal({
         roleScope: v.roleScope,
         sort: v.sort ?? 5,
         remark: v.remark, // 空串经 service 层 cleanPayload 落 NULL（§2.4）
-        // miId 不提交 → 后端默认 0 平台级【待后端：BE-ROLE-OPT-08】
+        // miId 后端登录态强制填充（OPT-08 已闭环），前端不提交
       };
       if (isEdit && editing) {
-        // code 锁定：守卫内 TS 已收窄 editing 非空，显式覆盖 code 为原值（disabled 字段丢值双保险）
-        // 【待后端：BE-ROLE-OPT-05】4101 code 锁定 / 4102 编码已存在，当前 message 透传
+        // code 锁定：显式覆盖为原值（后端校验 4101 兜底）
         const res = await updateRole({
           id: editing.id,
           ...payload,
@@ -163,7 +161,16 @@ export default function RoleFormModal({
       savedRef.current = true;
       onSaved();
     } catch (e) {
-      message.error((e as Error).message); // 失败透传且不关闭
+      // OPT-05 已联调：4101=code锁定（编辑态已强制回填原值，防御保留）
+      // 4102=编码重复 → 内联到 code 字段，不打断填写；其余走全局 toast
+      const err = e as BizError;
+      if (err?.code === 4101 || err?.code === 4102) {
+        form.setFields([{ name: 'code', errors: [err.message] }]);
+        form.scrollToField('code');
+        form.focusField?.('code');
+      } else {
+        message.error((e as Error).message); // 失败透传且不关闭
+      }
     } finally {
       setSaving(false);
     }
@@ -280,7 +287,7 @@ export default function RoleFormModal({
         {isEdit && (
           <div style={{ color: '#999', fontSize: 12 }}>
             角色编码创建后锁定（后端校验，传不一致值将报错）；机构归属 miId
-            本期固定平台级 0 【待后端：BE-ROLE-OPT-08】
+            由后端登录态自动填充，无需选择。
           </div>
         )}
       </Form>
