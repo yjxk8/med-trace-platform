@@ -5,7 +5,7 @@
  * - POST /dept；PUT /dept（不允许改上级部门）；DELETE /dept/{id}（级联软删全部子孙）
  * - deptStatus：1启用 2禁用（tinyint 数字非布尔，比较一律 Number 归一化）
  */
-import { bizRequest } from '@/services//auth';
+import { bizRequest } from '@/services/auth';
 import { getMiIdRequired } from '@/services/tenant';
 import { cleanPayload } from '@/utils/payload'; // R2：唯一来源
 
