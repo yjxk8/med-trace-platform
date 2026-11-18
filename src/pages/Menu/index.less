@@ -1,0 +1,90 @@
+// 菜单管理页面局部样式（唯一 .menu-table-fill 根块）
+// 「铺满」三层机制（配合 FillTable 源码）：
+//  ① 本容器纵向 flex → FillTable box 层(flex:1+minHeight:0) 测高准确（scrollY 无循环）；
+//  ② 拉伸链：.fill-table → pro 层 → antd 各层 flex column + flex:1，
+//    表体 .ant-table-body flex:1 → 表头以下空间全部归表体（滚动区域始终占满卡片）；
+//  ③ 行均摊：表体 table height:100% —— 数据少时行高均摊铺满，
+//    数据多时按内容自然高度（>100%）→ 自动回紧凑行高 + 表体内部滚动。
+.menu-table-fill {
+  flex: 1;
+  min-height: 0;
+  display: flex; // ① 让 box 层 flex:1 生效
+  flex-direction: column;
+
+  .fill-table {
+    display: flex;
+    flex-direction: column;
+
+    // pro 包装层（.ant-pro-table，个别版本类名为 .ant-pro-table-wrapper）
+    > * {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    // antd 内部各层：全部纳入可拉伸的纵向 flex 链
+    .ant-table-wrapper,
+    .ant-spin-nested-loading,
+    .ant-spin-container,
+    .ant-table,
+    .ant-table-container {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    // 表头固定高度，不参与拉伸
+    .ant-table-header {
+      flex: none;
+    }
+
+    // ② 表体占满「表头以下」全部空间；
+    //    内容超出时被 antd 注入的 inline max-height 封顶 → 表体内部滚动
+    .ant-table-body {
+      flex: 1;
+      min-height: 0;
+    }
+
+    // ③ 数据少时行均摊铺满（不想让行变高，删掉这条即可，区域仍会占满）
+    .ant-table-body > table {
+      height: 100%;
+    }
+  }
+
+  // ===== 紧凑行距（覆盖 FillTable 注入的 10px 密度）=====
+  .ant-table-thead > tr > th {
+    padding: 6px 8px !important;
+  }
+  .ant-table-tbody > tr > td {
+    padding: 4px 8px !important;
+  }
+  .ant-table-row-expand-icon {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+// ===== 已选条件 Tag 行 =====
+.menu-filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: -4px 0 10px;
+  flex-shrink: 0;
+}
+.menu-filter-tags__label {
+  color: #8c8c8c;
+  font-size: 12px;
+  margin-right: 6px;
+}
+.menu-filter-tags__item {
+  margin-inline-end: 4px;
+}
+
+// ===== 排序列头提示 =====
+.menu-sort-title {
+  display: inline-flex;
+  align-items: center;
+}

@@ -1,0 +1,117 @@
+// ============================================================================
+// 用户组域 · 目录级共享样式表(本目录唯一 less;非模块化,按页面入口加载)
+// 消费契约(用到类名的页面入口必须自行 import './index.less';
+// 父页代载不保证直进生效——历史坑:审计/合规页直进塌陷):
+//   index.tsx           用户组列表 → group-table-fill / narcotic-row / group-filter-tags*
+//   AuditAuth.tsx       授权审计   → group-table-fill        【本轮补 import】
+//   ComplianceConfirm   合规确认   → group-table-fill        【本轮补 import】
+//   MemberDrawer.tsx    成员抽屉   → member-fill             【本轮补防御 import】
+// 列表页 flex 链路:筛选区(fixed) → Tag行(fixed) → .group-table-fill(flex:1)
+//   → pro-card → card-body → table-wrapper → .ant-table(内滚+sticky) → 分页钉底
+// ============================================================================
+.group-table-fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  .ant-pro-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .ant-pro-card-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+
+  .ant-table-wrapper {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .ant-table {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .ant-table-thead > tr > th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  .ant-table-pagination.ant-pagination {
+    flex-shrink: 0;
+    margin: 12px 0 4px;
+  }
+}
+
+// 麻精敏感组整行浅红底(§3.1,仅用户组列表消费)
+.ant-table-tbody > tr.narcotic-row > td {
+  background: #fff1f0;
+}
+
+// Drawer 内成员表:固定可视高 + 同款 flex 链路(内滚+表头 sticky+分页钉底)
+.member-fill {
+  height: calc(100vh - 300px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  .ant-table-wrapper {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .ant-table {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .ant-table-thead > tr > th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  .ant-table-pagination.ant-pagination {
+    flex-shrink: 0;
+    margin: 12px 0 4px;
+  }
+}
+
+.group-filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: -4px 0 10px;
+  flex-shrink: 0;
+}
+
+.group-filter-tags__label {
+  color: #8c8c8c;
+  font-size: 12px;
+  margin-right: 6px;
+}
+
+.group-filter-tags__item {
+  margin-inline-end: 4px;
+}

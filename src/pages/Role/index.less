@@ -81,6 +81,13 @@
   align-items: center;
 }
 
+// ===== 分配菜单弹窗：级联说明 =====
+.role-cascade-tip {
+  color: #8c8c8c;
+  font-size: 12px;
+  margin: 4px 0 8px;
+}
+
 // ===== 分配菜单弹窗：工具条 =====
 .role-tree-toolbar {
   display: flex;
@@ -100,18 +107,15 @@
   white-space: nowrap;
 }
 
-// ===== 分配菜单弹窗：级联说明 =====
-.role-cascade-tip {
-  color: #8c8c8c;
-  font-size: 12px;
-  margin: 4px 0 8px;
-}
-
 // ===== 分配菜单弹窗：树容器 =====
 .role-tree-box {
   max-height: 420px;
   overflow-y: auto;
   padding-right: 4px;
+}
+// 页签占用一行高度，适当下调，避免弹窗整体超高
+.role-tree-box--tabbed {
+  max-height: 380px;
 }
 
 // ===== 分配菜单弹窗：树节点（图标 + 名称 + 类型标识）=====
@@ -139,18 +143,13 @@
   flex-shrink: 0;
 }
 
-// 停用节点置灰（【待后端：BE-ROLE-OPT-03】后端返回含停用节点后生效）
+// 停用节点置灰（OPT-03 已联调：/menu/tree 返回含停用节点，样式已生效）
 .role-menu-node--disabled {
   color: #bfbfbf;
   .role-menu-node__icon {
     color: #d9d9d9;
   }
 }
-.role-tree-box--tabbed {
-  max-height: 380px; // 页签占用一行高度，适当下调，避免弹窗整体超高
-}
-
-// 追加（其余样式不变）
 
 // ===== 分配菜单弹窗：左右双栏布局 =====
 .role-assign-body {
