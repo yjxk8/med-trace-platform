@@ -14,7 +14,7 @@ import {
   fetchUserOptions,
   getUserDetail,
   type UserOptionVO,
-} from '@/services/user';
+} from '@/services/org/user';
 
 interface Props {
   value?: number | null;

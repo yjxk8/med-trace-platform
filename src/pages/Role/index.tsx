@@ -1,16 +1,22 @@
 /**
- * 角色管理（分页表 + 多条件筛选 + 已选条件 Tag）—— 契约：角色管理 v1.0 §2.2/§2.3/§7
- * 修复：分页布局——显式传 pagination 会绕过 FillTable 自适应填充，导致卡片高度
- *      塌缩为内容高度（滚动条 + 分页浮动）。改为 flex 自管：
- *      筛选区/Tag 固定 → 表格区 flex:1 撑满剩余高度（.role-table-fill）→
- *      表格内部滚动 + 表头 sticky → 分页钉死底部（与行数无关）。
- *      已选条件 Tag 出现/消失时高度自动重分配，不再依赖 reservedHeight 手调。
- * 【待后端：BE-ROLE-OPT-01】启用/停用接口落地后，操作列追加第 4 个操作并收进「更多」Dropdown
- * 【待后端：BE-ROLE-OPT-02】t_user_role 绑定校验上线后，删除失败文案由后端透传（前端已兼容）
- * 【待后端：BE-ROLE-OPT-06】统一响应体 wrapper + Authorization 格式落地后，仅需 bizRequest 侧适配
+ * 角色管理（分页表 + 多条件筛选 + 已选条件 Tag + 状态启停）—— 契约：角色管理 v1.0
+ * 当前态（M1~M3 全量闭环）：
+ *  ① 「状态」列 + 筛选 + 已选条件 Tag（OPT-01 闭环）；
+ *  ② 操作列口径调整：操作 ≤4 个平铺，超过 4 个才收进「更多」Dropdown——
+ *    当前 4 个操作（编辑/分配菜单/停用|启用/删除）全部平铺，取消 Dropdown；
+ *    二期新增 OPT-12「查看权限」（第 5 个）时，需将第 4 个起收进 Dropdown；
+ *  ③ 启停：文案互斥，停用二次确认（影响在线用户），启用轻操作直接执行；
+ *    图标互斥：停用↓灰 / 启用↑绿；
+ *  ④ 删除确认文案含绑定校验承诺（OPT-02 闭环：4001 文案后端返回透传）；
+ *  ⑤ 4101/4102 表单内联提示在 RoleFormModal（OPT-05 闭环）。
+ * 状态口径：status=停用可恢复（列表照常展示，仅 Tag 区分）；delFlag=删除不可见，无需处理。
+ * 【待产品确认】停用行操作策略：当前按方案 A 不限制（管理员可预配置菜单后再启用）。
+ * 二期预留：OPT-07 属地筛选 / OPT-09 合规标识 / OPT-12 只读「查看权限」抽屉
  */
 import {
   ApartmentOutlined,
+  ArrowDownOutlined,
+  ArrowUpOutlined,
   DeleteOutlined,
   EditOutlined,
   InfoCircleOutlined,
@@ -32,9 +38,12 @@ import { useMemo, useRef, useState } from 'react';
 import FillTable from '@/components/FillTable';
 import PageFill from '@/components/PageFill';
 import {
+  changeRoleStatus,
   deleteRole,
   getRolePage,
+  ROLE_STATUS,
   type RoleQuery,
+  type RoleStatus,
   type RoleVO,
 } from '@/services/org/role';
 import AssignMenuModal from './AssignMenuModal';
@@ -42,15 +51,23 @@ import RoleFormModal from './RoleFormModal';
 import {
   DATA_SCOPE_OPTIONS,
   ROLE_SCOPE_OPTIONS,
+  ROLE_STATUS_OPTIONS,
   ROLE_TYPE_OPTIONS,
   renderDataScope,
   renderRoleScope,
+  renderRoleStatus,
   renderRoleType,
 } from './shared';
 import './index.less';
 
 /** 已选条件支持的筛选键 */
-type FilterKey = 'name' | 'code' | 'roleType' | 'dataScope' | 'roleScope';
+type FilterKey =
+  | 'name'
+  | 'code'
+  | 'roleType'
+  | 'dataScope'
+  | 'roleScope'
+  | 'status';
 
 interface ActiveFilter {
   key: FilterKey;
@@ -76,13 +93,13 @@ export default function RoleManage() {
   const [roleType, setRoleType] = useState<number | undefined>(undefined);
   const [dataScope, setDataScope] = useState<number | undefined>(undefined);
   const [roleScope, setRoleScope] = useState<number | undefined>(undefined);
+  const [roleStatus, setRoleStatus] = useState<number | undefined>(undefined);
   const filterRef = useRef<RoleQuery>({});
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<RoleVO | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignRole, setAssignRole] = useState<RoleVO | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null); // 行删除独立 loading
 
   /** 已选条件 Tag 数据源（随筛选态派生，单个可移除） */
   const activeFilters = useMemo<ActiveFilter[]>(() => {
@@ -106,8 +123,13 @@ export default function RoleManage() {
         key: 'roleScope',
         label: `角色范围：${findLabel(ROLE_SCOPE_OPTIONS, roleScope)}`,
       });
+    if (roleStatus != null)
+      arr.push({
+        key: 'status',
+        label: `状态：${findLabel(ROLE_STATUS_OPTIONS, roleStatus)}`,
+      });
     return arr;
-  }, [name, code, roleType, dataScope, roleScope]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [name, code, roleType, dataScope, roleScope, roleStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doSearch = () => {
     filterRef.current = {
@@ -116,6 +138,7 @@ export default function RoleManage() {
       roleType,
       dataScope,
       roleScope,
+      status: roleStatus,
     };
     actionRef.current?.reloadAndRest?.(); // 筛选后页码重置为 1
   };
@@ -126,6 +149,7 @@ export default function RoleManage() {
     setRoleType(undefined);
     setDataScope(undefined);
     setRoleScope(undefined);
+    setRoleStatus(undefined);
     filterRef.current = {};
     actionRef.current?.reloadAndRest?.(); // 重置后页码重置为 1
   };
@@ -137,6 +161,7 @@ export default function RoleManage() {
     else if (key === 'roleType') setRoleType(undefined);
     else if (key === 'dataScope') setDataScope(undefined);
     else if (key === 'roleScope') setRoleScope(undefined);
+    else if (key === 'status') setRoleStatus(undefined);
     const next = { ...filterRef.current };
     delete next[key];
     filterRef.current = next;
@@ -148,26 +173,64 @@ export default function RoleManage() {
     setFormOpen(true);
   };
 
-  /** 删除：danger 操作，独立行内 loading，与表格 loading 分离 */
+  /**
+   * 启停（OPT-01 闭环）：文案互斥「停用/启用」；
+   * 停用影响在线用户 → 二次确认；启用轻操作 → 直接执行；成功 message 透传后端返回值。
+   * 失败统一 toast 后端 message；rejection 仅在确认框路径抛出（antd 捕获保持开启），
+   * 直调路径吞掉，防控制台 unhandled rejection。
+   */
+  const toggleStatus = (r: RoleVO) => {
+    const disabled =
+      String(r.status ?? ROLE_STATUS.NORMAL) === String(ROLE_STATUS.DISABLED);
+    const target: RoleStatus = disabled
+      ? ROLE_STATUS.NORMAL
+      : ROLE_STATUS.DISABLED;
+    const doToggle = async () => {
+      try {
+        const res = await changeRoleStatus(r.id, target);
+        message.success(
+          res?.message ?? (target === ROLE_STATUS.NORMAL ? '已启用' : '已停用'),
+        );
+        actionRef.current?.reload();
+      } catch (e) {
+        message.error((e as Error).message); // '状态值非法…' / '角色不存在，id=x' 透传
+        throw e; // 确认框路径保持开启；直调路径由 .catch 吞掉
+      }
+    };
+    if (disabled) {
+      // 启用直接执行——错误已 toast，吞 rejection 防控制台 unhandled 告警
+      doToggle().catch(() => undefined);
+    } else {
+      Modal.confirm({
+        title: `确认停用角色「${r.name}」？`,
+        content:
+          '停用后该角色下用户将立即失去对应菜单的访问权限（可随时重新启用）。',
+        okText: '停用',
+        okButtonProps: { danger: true },
+        onOk: doToggle,
+      });
+    }
+  };
+
+  /**
+   * 删除：danger 操作，确认框 onOk 自带 loading。
+   * OPT-02 闭环：已绑定角色删除被拒，4001 文案（含绑定数 N）由后端返回透传。
+   */
   const removeRole = (r: RoleVO) => {
     Modal.confirm({
       title: `删除角色「${r.name}」？`,
-      // 文案明确「逻辑删除、不可恢复」；绑定校验文案依赖后端【待后端：BE-ROLE-OPT-02】
       content:
-        '该操作为逻辑删除，删除后不可恢复，已绑定用户的访问将同步失效。确定删除吗？',
+        '删除后角色不可恢复，已绑定用户的访问将同步失效（若角色已分配用户，删除将被拒绝并提示解绑）。',
       okText: '删除',
       okButtonProps: { danger: true },
       onOk: async () => {
-        setDeletingId(r.id);
         try {
-          const res = await deleteRole(r.id); // 【待后端：BE-ROLE-OPT-02】绑定数校验与友好报错
+          const res = await deleteRole(r.id);
           message.success(res?.message || '删除成功');
           actionRef.current?.reload();
         } catch (e) {
           message.error((e as Error).message);
-          throw e; // 保持确认框开启（对齐菜单模块）
-        } finally {
-          setDeletingId(null);
+          throw e; // 保持确认框开启（对齐工程约定）
         }
       },
     });
@@ -188,7 +251,7 @@ export default function RoleManage() {
       dataIndex: 'dataScope',
       width: 130,
       align: 'center',
-      // 二期合规扩展位【待后端：BE-ROLE-OPT-09】
+      // 二期合规扩展位（OPT-09 预留）
       render: (_, r) => renderDataScope(r.dataScope),
     },
     {
@@ -197,6 +260,14 @@ export default function RoleManage() {
       width: 90,
       align: 'center',
       render: (_, r) => renderRoleScope(r.roleScope),
+    },
+    {
+      // OPT-01：状态列（正常=绿 / 停用=灰；停用角色照常出现在列表，仅 Tag 区分）
+      title: '状态',
+      dataIndex: 'status',
+      width: 80,
+      align: 'center',
+      render: (_, r) => renderRoleStatus(r.status),
     },
     {
       title: (
@@ -230,61 +301,92 @@ export default function RoleManage() {
       title: '操作',
       valueType: 'option',
       fixed: 'right',
-      width: 140,
+      width: 170,
       align: 'center',
+      // 调整：操作列口径——≤4 个平铺，>4 个才收进「更多」Dropdown；
+      // 当前 4 个操作全部平铺；二期新增 OPT-12「查看权限」（第 5 个）时需收 Dropdown
       // ⚠️ 第一参是 dom，必须占位 _（历史坑）
-      render: (_, r) => (
-        <Space size={0}>
-          <Tooltip title="编辑">
-            <Button
-              type="text"
-              size="small"
-              style={{ padding: '0 4px' }}
-              icon={<EditOutlined style={{ color: '#8c8c8c', fontSize: 14 }} />}
-              onClick={() => {
-                setEditing(r);
-                setFormOpen(true);
-              }}
-            />
-          </Tooltip>
-          <Tooltip title="分配菜单">
-            <Button
-              type="text"
-              size="small"
-              style={{ padding: '0 4px' }}
-              icon={
-                <ApartmentOutlined style={{ color: '#8c8c8c', fontSize: 14 }} />
-              }
-              onClick={() => {
-                setAssignRole(r);
-                setAssignOpen(true);
-              }}
-            />
-          </Tooltip>
-          <Tooltip title="删除">
-            <Button
-              type="text"
-              size="small"
-              danger
-              style={{ padding: '0 4px' }}
-              loading={deletingId === r.id} // 行操作 loading 与表格 loading 分离
-              icon={<DeleteOutlined style={{ fontSize: 14 }} />}
-              onClick={() => removeRole(r)}
-            />
-          </Tooltip>
-        </Space>
-      ),
+      render: (_, r) => {
+        const disabled =
+          String(r.status ?? ROLE_STATUS.NORMAL) ===
+          String(ROLE_STATUS.DISABLED);
+        return (
+          <Space size={0}>
+            {/* 1/4 编辑 */}
+            <Tooltip title="编辑">
+              <Button
+                type="text"
+                size="small"
+                style={{ padding: '0 4px' }}
+                icon={
+                  <EditOutlined style={{ color: '#8c8c8c', fontSize: 14 }} />
+                }
+                onClick={() => {
+                  setEditing(r);
+                  setFormOpen(true);
+                }}
+              />
+            </Tooltip>
+            {/* 2/4 分配菜单 */}
+            <Tooltip title="分配菜单">
+              <Button
+                type="text"
+                size="small"
+                style={{ padding: '0 4px' }}
+                icon={
+                  <ApartmentOutlined
+                    style={{ color: '#8c8c8c', fontSize: 14 }}
+                  />
+                }
+                onClick={() => {
+                  setAssignRole(r);
+                  setAssignOpen(true);
+                }}
+              />
+            </Tooltip>
+            {/* 3/4 停用|启用（图标互斥：停用↓灰 / 启用↑绿） */}
+            <Tooltip title={disabled ? '启用' : '停用'}>
+              <Button
+                type="text"
+                size="small"
+                style={{ padding: '0 4px' }}
+                icon={
+                  disabled ? (
+                    <ArrowUpOutlined
+                      style={{ color: '#52c41a', fontSize: 14 }}
+                    />
+                  ) : (
+                    <ArrowDownOutlined
+                      style={{ color: '#8c8c8c', fontSize: 14 }}
+                    />
+                  )
+                }
+                onClick={() => toggleStatus(r)}
+              />
+            </Tooltip>
+            {/* 4/4 删除（danger） */}
+            <Tooltip title="删除">
+              <Button
+                type="text"
+                size="small"
+                danger
+                style={{ padding: '0 4px' }}
+                icon={<DeleteOutlined style={{ fontSize: 14 }} />}
+                onClick={() => removeRole(r)}
+              />
+            </Tooltip>
+          </Space>
+        );
+      },
     },
   ];
-  // 操作列说明：当前 3 个操作未超过「更多」下拉阈值；
-  // 【待后端：BE-ROLE-OPT-01】启停接口落地后追加第 4 个操作，届时收进 Dropdown「更多」
 
   return (
     <PageFill>
       <div
         style={{
           flex: 1,
-          minHeight: 0, // 关键：允许本容器被子项压缩，flex 链路生效的前提
+          minHeight: 0, // flex 链路生效前提（分页钉底布局）
           background: '#fff',
           borderRadius: 8,
           padding: '12px 16px 8px',
@@ -292,7 +394,7 @@ export default function RoleManage() {
           flexDirection: 'column',
         }}
       >
-        {/* 筛选区：查询主按钮 / 重置次按钮（固定高度，flexShrink:0） */}
+        {/* 筛选区：查询主按钮 / 重置次按钮 */}
         <div
           style={{ display: 'flex', gap: 8, marginBottom: 8, flexShrink: 0 }}
         >
@@ -336,6 +438,15 @@ export default function RoleManage() {
             value={roleScope}
             onChange={(v) => setRoleScope(v)}
           />
+          {/* OPT-01：状态筛选 */}
+          <Select
+            allowClear
+            style={{ width: 90 }}
+            placeholder="状态"
+            options={ROLE_STATUS_OPTIONS}
+            value={roleStatus}
+            onChange={(v) => setRoleStatus(v)}
+          />
           <Button type="primary" onClick={doSearch}>
             查询
           </Button>
@@ -367,8 +478,7 @@ export default function RoleManage() {
           </div>
         )}
 
-        {/* 修复：表格填充区——flex:1 撑满剩余高度；表格内部滚动 + 表头 sticky +
-            分页钉底（样式见 .role-table-fill），不再依赖 FillTable 高度自适应 */}
+        {/* 表格填充区：flex:1 撑满剩余高度；表格内部滚动 + 表头 sticky + 分页钉底 */}
         <div className="role-table-fill">
           <FillTable
             pro
@@ -379,10 +489,9 @@ export default function RoleManage() {
             search={false}
             options={{ reload: true, density: false, setting: false }}
             cardBordered={false}
-            // 修复：只传横向滚动；纵向高度交由 .role-table-fill 的 flex 布局管理，
-            // 避免与 FillTable 注入的 scroll.y 叠加产生双滚动条
-            scroll={{ x: 1200 }}
-            // 修复：固定每页 10 行
+            // 只传横向滚动；纵向高度由 .role-table-fill 的 flex 布局管理
+            scroll={{ x: 1280 }}
+            // 固定每页 10 行（FillTable 自适应分页会按视口高度算 pageSize）
             pagination={{
               pageSize: 10,
               defaultPageSize: 10,
