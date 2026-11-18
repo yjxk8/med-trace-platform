@@ -1,37 +1,33 @@
 /**
- * 用户-角色分配弹窗（左树右已选面板）—— 契约：用户-角色分配管理 v1.0 §2.2/§6.4/§6.5/§7.3
- * 形态对齐 Role/AssignMenuModal：左=树形勾选（一级=角色类型分组，二级=角色叶子），
- * 右=已选实时汇总（点击 Tag 移除，双向联动）；宽 880 双栏，窄屏自动换行。
- *
- * 【形态说明】角色为扁平数据，分组由前端按 roleType 虚拟构建；无页签；无默认角色 UI——
- * defaultRoleId 仅在回显存在且仍被勾选时原样透传（防止覆盖保存把默认标记抹成「其他」；
- * 取消勾选默认角色 → 不传 → 后端全部标记「其他」；产品确认废弃可删 doSave 中的透传 if）。
+ * 用户-部门分配弹窗（左树右已选面板）—— 契约：UserController GET/PUT /user/{id}/depts
+ * 形态对齐 UserRoleAssignModal：左=部门树勾选（级联），右=已选实时汇总；复用 ./index.less 样式。
  *
  * 契约红线：
- * ① preserved 兜底（数据丢失级）：回显 roleId 不在树内（已停用角色）→ 右侧
- *    「历史授权」分组，移除标签 = 主动解绑；不做兜底 = 全量覆盖静默删除（§3.1-6）；
- * ② roleIds 三态：[]=清空 / null=报错（service 不过 cleanPayload，[] 保得住）；
- * ③ 提交口径：勾选角色叶子 ∪ preserved（分组 key 为 group-*，不进 payload）；
- * ④ 未变更不提交（基线=回显角色集合，只比 roleIds）；覆盖确认含摘要；
- *    失败 throw 保持确认框开启；
- * ⑤ 搜索为树内本地过滤（options 上限 50），命中文本在 buildRoleTree 时写入
- *    searchTextRef（name+code 小写），不从 JSX 反解。
+ * ① 部门为层级树（parentId），无类型分组；勾父级联全选子部门（checkStrictly=false，对齐角色弹窗交互）；
+ *    ⚠️ 级联语义：回显的「父部门」会被级联为其全部子部门（全量覆盖口径下保存会把子部门一并绑定，
+ *    即「勾父=授权整棵子树」）；若产品要求父子独立勾选，把 Tree 的 checkStrictly 改 true 即可（单行切换）；
+ * ② deptIds 三态：[]=清空 / null=报错（service 严禁过 cleanPayload，user.ts 已保证）；
+ * ③ 回显项自带 deptName → 不在候选树内的历史绑定直接用回显名建「历史绑定」组
+ *    （免反查，对齐角色 preserved 兜底思想；移除标签=主动解绑）；
+ * ④ defaultDeptId 仅透传不设 UI：回显 isDefault=1 且仍被勾选时原样带上，
+ *    防止覆盖保存抹掉默认标记（对齐角色弹窗 defaultRoleId 口径）；
+ * ⑤ 未变更不提交（基线=回显部门集合）；覆盖确认含摘要；失败 throw 保持确认框开启；
+ * ⑥ 树内已停用部门：名称旁标「已停用」，仍可勾选/取消（绑定合法性由后端校验）。
  *
- * ★2026-11-17 修复（与 UserDeptAssignModal 同构）：
- * ⑥ 弹窗尺寸固定：左右两框固定高（BOX_H），搜索/勾选变化不再撑缩弹窗，滚动收敛到框内；
- * ⑦ 搜索态勾选安全：onCheck 三步合并——隐藏保留 + 新勾分组隐藏后代补齐 + 取消分组隐藏后代裁剪。
+ * ★2026-11-17 修复：
+ * ⑦ 弹窗尺寸固定：左右两框固定高（BOX_H，只随视口变化），搜索过滤/勾选数量变化不再撑缩弹窗，
+ *    滚动收敛到框内部（此前 body 内容自适应，输入搜索词弹窗高度跳动）；
+ * ⑧ 搜索态勾选安全：antd Tree onCheck 只按「当前渲染树」重算 checkedKeys，被搜索隐藏的
+ *    已勾选节点会被丢弃 → handleCheck 三步合并：隐藏保留 + 新勾父级隐藏后代补齐 + 取消父级隐藏后代裁剪。
  *
  * ★2026-11-18 biome 修复：
- * ⑧ forEach 箭头体一律加花括号（useIterableCallbackReturn：Set.add/Map.set 有返回值，
- *   裸表达式箭头被视为隐式返回）；
- * ⑨ 树节点 title 的 span 补 key（useJsxKeyInIterable；key 用节点自身唯一标识，非下标）。
+ * ⑨ forEach 箭头体一律加花括号（useIterableCallbackReturn：Set.add/Map.set 有返回值，
+ *    裸表达式箭头被视为隐式返回，共 3 处 5 个诊断）；
+ * ⑩ 树节点 title 的 span 补 key（useJsxKeyInIterable，key 用节点自身唯一标识 n.id）。
+ *
+ * ★数据源对齐点（全文件仅 loadDeptTree / normalizeDepts 两处依赖 dept 模块形状，
+ * dept 模块接口/字段怎么变，只改这两个函数）：
  */
-import {
-  ApartmentOutlined,
-  BankOutlined,
-  TagsOutlined,
-  TeamOutlined,
-} from '@ant-design/icons';
 import {
   App,
   Button,
@@ -47,20 +43,16 @@ import type { DataNode } from 'antd/es/tree';
 import type { Key, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import DraggableModal from '@/components/DraggableModal';
-import type { BizError } from '@/services/org/role';
+// ★对齐点（dept 模块真实契约）：导出名 getDeptTree，miId 契约必传
+import { getDeptTree } from '@/services/org/dept';
 import {
-  fetchRoleOptions,
-  getRolePage,
-  ROLE_STATUS,
-  ROLE_TYPE,
-  type RoleOptionVO,
-} from '@/services/org/role';
-import {
-  assignUserRoles,
-  fetchUserRoles,
-  type UserRoleItem,
+  assignUserDepts,
+  fetchUserDepts,
+  type UserDeptItem,
   type UserVO,
 } from '@/services/org/user';
+import { getMiIdRequired } from '@/services/tenant';
+import { getOrgId } from '@/utils/orgContext';
 import './index.less';
 
 interface Props {
@@ -71,131 +63,137 @@ interface Props {
   onSaved: () => void;
 }
 
-/** preserved 项：停用角色历史授权（绑定角色不可删除 4001 → preserved 均为停用角色） */
+/** 历史绑定项：回显 deptId 不在候选树内（部门已删除/跨机构不可见） */
 interface PreservedItem {
   id: number;
   name: string;
 }
 
-/** 已选面板条目 */
-interface SelectedItem {
+/**
+ * 候选部门归一化中间态
+ * （字段名兼容：deptId|id、deptName|name|title、deptStatus|status）
+ */
+interface DeptFlat {
   id: string;
   name: string;
-  /** 分组 key（角色类型值；-1 = 停用角色历史授权；-2 = 未知类型兜底组） */
-  group: number;
+  parentId: string | null;
+  disabled: boolean;
 }
 
-interface SelectedGroup {
-  group: number;
+interface SelectedGroupView {
+  key: 'tree' | 'preserved';
   label: string;
   color: string;
-  items: SelectedItem[];
+  items: { id: string; name: string }[];
 }
 
-/** 树分组构建的中间结构（显式类型，保证每个组都有 icon，消除联合类型收窄问题） */
-interface TreeGroup {
-  key: string;
-  label: string;
-  color: string;
-  icon: typeof ApartmentOutlined;
-  items: RoleOptionVO[];
-}
-
-const PRESERVED_GROUP = -1;
-
-/** 树一级分组（roleType → 组；文案对齐 role/shared 的枚举标签） */
-const TYPE_GROUPS: {
-  key: number;
-  label: string;
-  color: string;
-  icon: typeof ApartmentOutlined;
-}[] = [
-  {
-    key: ROLE_TYPE.PLATFORM,
-    label: '平台角色',
-    color: 'geekblue',
-    icon: ApartmentOutlined,
-  },
-  {
-    key: ROLE_TYPE.HOSPITAL,
-    label: '医院角色',
-    color: 'blue',
-    icon: BankOutlined,
-  },
-  {
-    key: ROLE_TYPE.REGION,
-    label: '区域角色',
-    color: 'purple',
-    icon: TeamOutlined,
-  },
-];
-
-const GROUP_KEY_PREFIX = 'group-';
-
-// ===== 树构建 / 过滤工具（id 一律 String 归一化）=====
+// ===== dept 数据源（★对齐点：getDeptTree miId 契约必传）=====
 
 /**
- * 角色平铺列表 → 双层树：一级=类型分组（可勾，级联全选组内角色），二级=角色叶子。
- * 同时把每个节点的可搜索文本（分组名 / name+code，小写）写入 textMap 供过滤使用。
+ * 拉取候选部门：★登录所选机构优先——列表已按机构过滤，行用户必属当前机构；
+ * user.miId 仅兜底（防历史脏数据行/上下文缺失）；切机构后打开弹窗必拿新机构树
  */
-function buildRoleTree(
-  opts: RoleOptionVO[],
-  textMap: Map<string, string>,
-): DataNode[] {
-  const known = new Set(TYPE_GROUPS.map((g) => String(g.key)));
-  const others = opts.filter((o) => !known.has(String(o.roleType)));
-  const groups: TreeGroup[] = [
-    ...TYPE_GROUPS.map<TreeGroup>((g) => ({
-      key: String(g.key),
-      label: g.label,
-      color: g.color,
-      icon: g.icon,
-      items: opts.filter((o) => String(o.roleType) === String(g.key)),
-    })),
-    ...(others.length
-      ? [
-          {
-            key: 'other',
-            label: '其他角色',
-            color: 'default',
-            icon: TagsOutlined,
-            items: others,
-          },
-        ]
-      : []),
-  ].filter((g) => g.items.length > 0);
-
-  return groups.map((g) => {
-    const IconComp = g.icon;
-    const groupKey = `${GROUP_KEY_PREFIX}${g.key}`;
-    textMap.set(groupKey, g.label.toLowerCase());
-    // ★biome⑨：span 补 key（useJsxKeyInIterable；groupKey 为节点自身唯一标识）
-    const groupTitle: ReactNode = (
-      <span key={groupKey} className="user-role-node">
-        <IconComp className="user-role-node__icon" />
-        <span className="user-role-node__name">{g.label}</span>
-      </span>
-    );
-    return {
-      key: groupKey,
-      title: groupTitle,
-      selectable: false,
-      children: g.items.map((o) => {
-        textMap.set(String(o.id), `${o.name} ${o.code}`.toLowerCase());
-        // ★biome⑨：span 补 key（String(o.id) 为叶子唯一标识）
-        const leafTitle: ReactNode = (
-          <span key={String(o.id)} className="user-role-node">
-            <span className="user-role-node__name">{o.name}</span>
-            <span className="user-role-node__code">{o.code}</span>
-          </span>
-        );
-        return { key: String(o.id), title: leafTitle, selectable: false };
-      }),
-    };
-  });
+async function loadDeptTree(user: UserVO | null): Promise<any[]> {
+  const cur = getOrgId();
+  const uid = Number(user?.miId);
+  const miId =
+    cur != null && Number(cur) > 0
+      ? Number(cur)
+      : Number.isFinite(uid) && uid > 0
+        ? uid
+        : getMiIdRequired();
+  // 不传 deptStatus → 全量树（含停用部门，树内由 normalizeDepts 标「已停用」，仍可勾选/解绑）
+  const tree = await getDeptTree({ miId });
+  return Array.isArray(tree) ? tree : [];
 }
 
-/** 全部节点 key（展开全部 / 搜索态自动展开用） */
+/** 树/平铺双形态 → 归一化平铺（parentId 解析为树内引用，孤儿挂根） */
+function normalizeDepts(input: any[]): DeptFlat[] {
+  if (!Array.isArray(input) || input.length === 0) return [];
+  const hasNested = input.some(
+    (n) => Array.isArray(n?.children) && n.children.length > 0,
+  );
+  if (hasNested) {
+    const out: DeptFlat[] = [];
+    const walk = (list: any[], parentId: string | null) => {
+      (list ?? []).forEach((n) => {
+        const id = String(n?.deptId ?? n?.id ?? '');
+        if (!id) return;
+        out.push({
+          id,
+          name: String(n?.deptName ?? n?.name ?? n?.title ?? ''),
+          parentId,
+          disabled: String(n?.deptStatus ?? n?.status ?? '1') !== '1',
+        });
+        if (Array.isArray(n?.children)) walk(n.children, id);
+      });
+    };
+    walk(input, null);
+    if (out.length >= input.length) return out; // 树遍历覆盖全部顶层节点才采用
+  }
+  // 平铺形态（或树遍历异常）：按 parentId 重建
+  const flat = input
+    .map((n) => ({
+      id: String(n?.deptId ?? n?.id ?? ''),
+      name: String(n?.deptName ?? n?.name ?? n?.title ?? ''),
+      parentId: n?.parentId != null ? String(n.parentId) : null,
+      disabled: String(n?.deptStatus ?? n?.status ?? '1') !== '1',
+    }))
+    .filter((n) => n.id);
+  const ids = new Set(flat.map((n) => n.id));
+  const byParent = new Map<string, DeptFlat[]>();
+  flat.forEach((n) => {
+    const key =
+      n.parentId != null && ids.has(n.parentId) ? n.parentId : '__root__';
+    const arr = byParent.get(key) ?? [];
+    arr.push(n);
+    byParent.set(key, arr);
+  });
+  const out: DeptFlat[] = [];
+  const build = (pid: string) => {
+    (byParent.get(pid) ?? []).forEach((n) => {
+      out.push(n);
+      build(n.id);
+    });
+  };
+  build('__root__');
+  return out;
+}
+
+/** 归一化平铺 → antd DataNode 树；可搜索文本（name）写入 textMap */
+function buildDeptTree(
+  flat: DeptFlat[],
+  textMap: Map<string, string>,
+): DataNode[] {
+  const byParent = new Map<string | null, DeptFlat[]>();
+  flat.forEach((n) => {
+    const key =
+      n.parentId != null && flat.some((x) => x.id === n.parentId)
+        ? n.parentId
+        : null;
+    const arr = byParent.get(key) ?? [];
+    arr.push(n);
+    byParent.set(key, arr);
+  });
+  const build = (pid: string | null): DataNode[] =>
+    (byParent.get(pid) ?? []).map((n) => {
+      textMap.set(n.id, n.name.toLowerCase());
+      const children = build(n.id);
+      // ★修复⑩：span 补 key（useJsxKeyInIterable；n.id 为节点唯一标识）
+      const title: ReactNode = (
+        <span key={n.id} className="user-role-node">
+          <span className="user-role-node__name">{n.name}</span>
+          {n.disabled && <span className="user-role-node__code">已停用</span>}
+        </span>
+      );
+      return children.length
+        ? { key: n.id, title, children }
+        : { key: n.id, title };
+    });
+  return build(null);
+}
+
+/** 全部节点 key（展开全部/搜索态自动展开用） */
 function collectAllKeys(nodes: DataNode[], acc: Key[] = []): Key[] {
   nodes.forEach((n) => {
     acc.push(n.key);
@@ -204,13 +202,13 @@ function collectAllKeys(nodes: DataNode[], acc: Key[] = []): Key[] {
   return acc;
 }
 
-// ★2026-11-17 修复⑥：双栏固定高度（只随视口变化，不随搜索/勾选数量变化）
+// ★2026-11-17 修复⑦：双栏固定高度（只随视口变化，不随搜索/勾选数量变化）
 const BOX_H = 'min(520px, calc(100vh - 420px))';
 
 /**
- * ★2026-11-17 修复⑦辅助：全量树中 key 节点的全部后代 id（任意层级，String 数组）。
- * 搜索过滤态下 antd 的级联只作用于「可见树」；勾/取消分组时用它把
- * 被搜索隐藏的后代一并补齐/裁剪，保证「勾分组=全选组内角色」不因过滤而残缺。
+ * ★2026-11-17 修复⑧辅助：全量树中 key 节点的全部后代 id（任意层级，String 数组）。
+ * 搜索过滤态下 antd 的级联只作用于「可见树」；勾/取消父级时用它把
+ * 被搜索隐藏的后代一并补齐/裁剪，保证「勾父=全选子树」不因过滤而残缺。
  */
 function collectDescendantIds(tree: DataNode[], key: string): string[] {
   const out: string[] = [];
@@ -234,19 +232,7 @@ function collectDescendantIds(tree: DataNode[], key: string): string[] {
   return out;
 }
 
-/** 叶子 id 集合（= 真实角色 id，排除 group-* 分组节点）——提交与回显的边界 */
-function collectLeafIdSet(
-  nodes: DataNode[],
-  acc: Set<string> = new Set(),
-): Set<string> {
-  nodes.forEach((n) => {
-    if (n.children?.length) collectLeafIdSet(n.children, acc);
-    else acc.add(String(n.key));
-  });
-  return acc;
-}
-
-/** 树内搜索：命中（自身文本或子孙命中）保留；分组自命中时整组保留（对齐 AssignMenuModal） */
+/** 树内搜索：命中（自身文本或子孙命中）保留（对齐 AssignMenuModal/UserRoleAssignModal） */
 function filterTreeNodes(
   nodes: DataNode[],
   kw: string,
@@ -265,7 +251,7 @@ function filterTreeNodes(
   return res;
 }
 
-export default function UserRoleAssignModal({
+export default function UserDeptAssignModal({
   open,
   user,
   onClose,
@@ -274,19 +260,20 @@ export default function UserRoleAssignModal({
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [options, setOptions] = useState<RoleOptionVO[]>([]);
   const [treeData, setTreeData] = useState<DataNode[]>([]);
   const [checkedKeys, setCheckedKeys] = useState<Key[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<Key[]>([]);
   const [preserved, setPreserved] = useState<PreservedItem[]>([]);
   const [keyword, setKeyword] = useState('');
-  /** 回显的默认角色（无 UI，只透传；见文件头说明） */
-  const defaultRoleIdRef = useRef<number | undefined>(undefined);
-  /** 节点可搜索文本（key → 小写文本），buildRoleTree 时填充 */
+  /** 回显的默认部门（无 UI，只透传；见文件头④） */
+  const defaultDeptIdRef = useRef<number | undefined>(undefined);
+  /** 节点可搜索文本（key → 小写文本） */
   const searchTextRef = useRef<Map<string, string>>(new Map());
-  /** 叶子 id 集合（提交/回显边界） */
-  const leafIdSetRef = useRef<Set<string>>(new Set());
-  /** 打开时的基线（回显角色集合），isChanged 比对用 */
+  /** 树内全部真实部门 id（提交/回显边界；部门树全为真实 id，无分组 key） */
+  const allIdsRef = useRef<Set<string>>(new Set());
+  /** 归一化平铺（右侧已选面板名称来源） */
+  const flatRef = useRef<DeptFlat[]>([]);
+  /** 打开时的基线（回显部门集合），isChanged 比对用 */
   const baselineIdsRef = useRef<Set<string>>(new Set());
 
   const kw = keyword.trim().toLowerCase();
@@ -301,13 +288,13 @@ export default function UserRoleAssignModal({
   );
 
   /**
-   * ★2026-11-17 修复⑦：勾选处理（搜索过滤态安全）
+   * ★2026-11-17 修复⑧：勾选处理（搜索过滤态安全）
    * antd Tree 的 onCheck 只按「当前渲染树」重算 checkedKeys——被搜索隐藏的
    * 已勾选节点会被直接丢弃（右侧已选面板随之丢项）。三步：
    * ① 隐藏保留：不在当前渲染树内的旧勾选原样保留；
-   * ② 级联补齐：新勾选的分组/角色，其隐藏后代一并入选（勾分组=全选组内，含隐藏部分）；
-   * ③ 级联裁剪：取消勾选的分组，其隐藏后代一并移除（对齐未过滤时的级联语义）。
-   * ★biome⑧：四处 forEach 箭头体全部加花括号（Set.add 有返回值）
+   * ② 级联补齐：新勾选的父级，其隐藏后代一并入选（勾父=全选子树，含隐藏部分）；
+   * ③ 级联裁剪：取消勾选的父级，其隐藏后代一并移除（对齐未过滤时的级联语义）。
+   * ★修复⑨：incoming/added/removed 的 forEach 箭头体加花括号（Set.add 有返回值）
    */
   const handleCheck = (
     checked: Key[] | { checked: Key[]; halfChecked: Key[] },
@@ -320,86 +307,83 @@ export default function UserRoleAssignModal({
     prev.forEach((k) => {
       if (!visible.has(k)) merged.add(k); // ① 隐藏项保留
     });
+    // ★修复⑨：花括号（消原 301）
     incoming.forEach((k) => {
       merged.add(k); // 可见树的重算结果原样采用
     });
     const added = [...incoming].filter((k) => !prev.has(k));
     const removed = [...prev].filter((k) => visible.has(k) && !incoming.has(k));
+    // ★修复⑨：内外两层都要花括号（消原 304/305）
     added.forEach((k) => {
       collectDescendantIds(treeData, k).forEach((d) => {
         merged.add(d);
       });
-    }); // ② 补齐隐藏后代（内外两层都要花括号）
+    }); // ② 补齐隐藏后代
+    // ★修复⑨：内外两层都要花括号（消原 307/308）
     removed.forEach((k) => {
       collectDescendantIds(treeData, k).forEach((d) => {
         merged.delete(d);
       });
-    }); // ③ 裁剪隐藏后代（内外两层都要花括号）
+    }); // ③ 裁剪隐藏后代
     setCheckedKeys(Array.from(merged));
   };
 
-  // 打开：拉角色全量（树数据源）+ 回显；preserved 名称经停用角色分页反查（§7.3）
+  // 打开：拉部门树 + 回显；历史绑定直接用回显 deptName（免反查，对齐文件头③）
   useEffect(() => {
     if (!open || !user?.id) return;
     let alive = true;
     setLoading(true);
-    setOptions([]);
     setTreeData([]);
     setCheckedKeys([]);
     setExpandedKeys([]);
     setPreserved([]);
     setKeyword('');
     Promise.all([
-      fetchRoleOptions(),
-      fetchUserRoles(user.id).catch((e) => {
+      loadDeptTree(user).catch((e) => {
         console.warn(
-          '[UserRoleAssignModal] 已分配角色回显失败，本次打开无回显：',
+          '[UserDeptAssignModal] 部门树加载失败，本次打开无可选树：',
           e,
         );
-        return [] as UserRoleItem[];
+        return [] as any[];
+      }),
+      fetchUserDepts(user.id).catch((e) => {
+        console.warn(
+          '[UserDeptAssignModal] 已分配部门回显失败，本次打开无回显：',
+          e,
+        );
+        return [] as UserDeptItem[];
       }),
     ])
-      .then(async ([opts, items]) => {
+      .then(([depts, items]) => {
         if (!alive) return;
         const textMap = new Map<string, string>();
-        const tree = buildRoleTree(opts, textMap);
+        const flat = normalizeDepts(depts ?? []);
+        const tree = buildDeptTree(flat, textMap);
+        flatRef.current = flat;
         searchTextRef.current = textMap;
+        allIdsRef.current = new Set(collectAllKeys(tree).map(String));
         setTreeData(tree);
-        setExpandedKeys(tree.map((n) => String(n.key)));
-        leafIdSetRef.current = collectLeafIdSet(tree);
-        const echoIds = (items ?? []).map((i) => String(i.roleId));
-        const sel = echoIds.filter((id) => leafIdSetRef.current.has(id));
-        const presIds = echoIds.filter((id) => !leafIdSetRef.current.has(id));
-        let pres: PreservedItem[] = [];
-        if (presIds.length) {
-          try {
-            const page = await getRolePage({
-              status: ROLE_STATUS.DISABLED,
-              page: 1,
-              size: 100,
-            });
-            const nameMap = new Map<number, string>();
-            // ★biome⑧：花括号（Map.set 有返回值）
-            (page.records ?? []).forEach((r) => {
-              nameMap.set(Number(r.id), r.name);
-            });
-            pres = presIds.map((id) => ({
-              id: Number(id),
-              name: nameMap.get(Number(id)) ?? `#${id}`,
-            }));
-          } catch {
-            pres = presIds.map((id) => ({
-              id: Number(id),
-              name: `#${id}`,
-            }));
-          }
-        }
-        const defItem = (items ?? []).find((i) => Number(i.isDefault) === 1);
-        defaultRoleIdRef.current = defItem ? Number(defItem.roleId) : undefined;
+        setExpandedKeys(tree.map((n) => String(n.key))); // 默认展开一级根部门
+        const echo = items ?? [];
+        const echoIds = echo.map((i) => String(i.deptId));
+        const sel = echoIds.filter((id) => allIdsRef.current.has(id));
+        const presIds = echoIds.filter((id) => !allIdsRef.current.has(id));
+        const nameOf = new Map(
+          echo.map((i) => [
+            String(i.deptId),
+            String(i.deptName ?? `#${i.deptId}`),
+          ]),
+        );
+        setPreserved(
+          presIds.map((id) => ({
+            id: Number(id),
+            name: nameOf.get(id) ?? `#${id}`,
+          })),
+        );
+        const def = echo.find((i) => Number(i.isDefault) === 1);
+        defaultDeptIdRef.current = def ? Number(def.deptId) : undefined;
         baselineIdsRef.current = new Set(echoIds);
-        setOptions(opts);
         setCheckedKeys(sel);
-        setPreserved(pres);
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -409,25 +393,23 @@ export default function UserRoleAssignModal({
     };
   }, [open, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** 提交口径：勾选叶子 ∪ preserved（分组节点 group-* 不进 payload，§7.3） */
-  const buildRoleIds = (): number[] => {
+  /** 提交口径：勾选真实部门 ∪ 历史绑定（§红线②；deptIds 恒传，[]=清空） */
+  const buildDeptIds = (): number[] => {
     const all = new Set<string>(preserved.map((p) => String(p.id)));
     checkedKeys.forEach((k) => {
       const s = String(k);
-      if (!s.startsWith(GROUP_KEY_PREFIX) && leafIdSetRef.current.has(s)) {
-        all.add(s);
-      }
+      if (allIdsRef.current.has(s)) all.add(s);
     });
     return Array.from(all).map(Number);
   };
 
   const selectedCount = useMemo(
-    () => buildRoleIds().length,
+    () => buildDeptIds().length,
     [checkedKeys, preserved], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const isChanged = (): boolean => {
-    const cur = new Set(buildRoleIds().map(String));
+    const cur = new Set(buildDeptIds().map(String));
     const base = baselineIdsRef.current;
     if (cur.size !== base.size) return true;
     for (const v of cur) if (!base.has(v)) return true;
@@ -444,7 +426,6 @@ export default function UserRoleAssignModal({
     setExpandedKeys([]);
   };
   const selectAll = () => {
-    // 搜索态下只追加当前过滤结果（与既有勾选取并集）
     const leaves: Key[] = [];
     const walk = (nodes: DataNode[]): void => {
       nodes.forEach((n) => {
@@ -455,7 +436,7 @@ export default function UserRoleAssignModal({
     walk(kw ? filteredTree : treeData);
     setCheckedKeys((prev) => {
       const s = new Set(prev.map(String));
-      // ★biome⑧：花括号（Set.add 有返回值）
+      // ★修复⑨：花括号（Set.add 有返回值；消原 421）
       leaves.forEach((l) => {
         s.add(String(l));
       });
@@ -468,71 +449,41 @@ export default function UserRoleAssignModal({
     setPreserved([]);
   };
 
-  // ===== 右侧已选面板（按类型分组 + 历史授权组；点击 Tag 移除，双向联动）=====
-  const selectedGroups = useMemo<SelectedGroup[]>(() => {
+  // ===== 右侧已选面板（已选部门 + 历史绑定；点击 Tag 移除，双向联动）=====
+  const selectedGroups = useMemo<SelectedGroupView[]>(() => {
     const checkedSet = new Set(checkedKeys.map(String));
-    const groups: SelectedGroup[] = [];
-    TYPE_GROUPS.forEach((g) => {
-      const items: SelectedItem[] = [];
-      options.forEach((o) => {
-        if (String(o.roleType) !== String(g.key)) return;
-        if (!checkedSet.has(String(o.id))) return;
-        items.push({
-          id: String(o.id),
-          name: o.name,
-          group: g.key,
-        });
-      });
-      if (items.length) {
-        groups.push({
-          group: g.key,
-          label: g.label,
-          color: g.color,
-          items,
-        });
-      }
-    });
-    // 未知 roleType 的已选角色兜底进「其他角色」组
-    const known = new Set(TYPE_GROUPS.map((g) => String(g.key)));
-    const otherItems: SelectedItem[] = [];
-    options.forEach((o) => {
-      if (known.has(String(o.roleType))) return;
-      if (!checkedSet.has(String(o.id))) return;
-      otherItems.push({
-        id: String(o.id),
-        name: o.name,
-        group: -2,
-      });
-    });
-    if (otherItems.length) {
+    const groups: SelectedGroupView[] = [];
+    const items = flatRef.current
+      .filter((d) => checkedSet.has(d.id))
+      .map((d) => ({ id: d.id, name: d.name }));
+    if (items.length) {
       groups.push({
-        group: -2,
-        label: '其他角色',
-        color: 'default',
-        items: otherItems,
+        key: 'tree',
+        label: '已选部门',
+        color: 'blue',
+        items,
       });
     }
     if (preserved.length) {
       groups.push({
-        group: PRESERVED_GROUP,
-        label: '历史授权（停用角色）',
+        key: 'preserved',
+        label: '历史绑定（不在当前部门树）',
         color: 'orange',
         items: preserved.map((p) => ({
           id: String(p.id),
-          name: `${p.name}（已停用）`,
-          group: PRESERVED_GROUP,
+          name: p.name,
         })),
       });
     }
     return groups;
-  }, [options, checkedKeys, preserved]);
+  }, [checkedKeys, preserved]);
 
-  const removeSelected = (item: SelectedItem) => {
-    if (item.group === PRESERVED_GROUP) {
-      setPreserved((prev) => prev.filter((p) => String(p.id) !== item.id));
+  const removeSelected = (g: SelectedGroupView, it: { id: string }) => {
+    if (g.key === 'preserved') {
+      setPreserved((prev) => prev.filter((p) => String(p.id) !== it.id));
       return;
     }
-    setCheckedKeys((keys) => keys.filter((k) => String(k) !== item.id));
+    setCheckedKeys((keys) => keys.filter((k) => String(k) !== it.id));
   };
 
   // ===== 保存 =====
@@ -540,28 +491,21 @@ export default function UserRoleAssignModal({
     if (!user?.id) return;
     setSaving(true);
     try {
-      const roleIds = buildRoleIds();
-      // 三态落位：roleIds 恒传（[]=清空）（§6.5）
-      const payload: { roleIds: number[]; defaultRoleId?: number } = {
-        roleIds,
+      const deptIds = buildDeptIds();
+      // 三态落位：deptIds 恒传（[]=清空）
+      const payload: { deptIds: number[]; defaultDeptId?: number } = {
+        deptIds,
       };
-      // 默认角色透传：回显值仍被勾选时原样带上，防止覆盖保存抹掉默认标记；
-      // 已被取消勾选 → 不传 → 后端全部标记「其他」（产品确认废弃可删此 if）
-      const def = defaultRoleIdRef.current;
-      if (def != null && roleIds.includes(def)) {
-        payload.defaultRoleId = def;
+      const def = defaultDeptIdRef.current;
+      if (def != null && deptIds.includes(def)) {
+        payload.defaultDeptId = def;
       }
-      const res = await assignUserRoles(user.id, payload);
+      const res = await assignUserDepts(user.id, payload);
       message.success(res?.message || '分配成功');
       onSaved();
     } catch (e) {
-      const err = e as BizError;
-      if (err?.code === 4402) {
-        message.warning(err.message); // 后端文案自带「请通过用户组授权并走合规确认」引导，原文 toast
-      } else {
-        message.error((e as Error).message);
-      }
-      throw e;
+      message.error((e as Error).message);
+      throw e; // 保持确认框开启（对齐角色弹窗约定）
     } finally {
       setSaving(false);
     }
@@ -575,7 +519,7 @@ export default function UserRoleAssignModal({
     }
     Modal.confirm({
       title: '覆盖确认',
-      content: `本次将全量覆盖「${user.name}」的角色绑定，保存后共保留 ${buildRoleIds().length} 个角色（含已停用角色的历史授权），未保留的角色将被解除绑定，是否继续？`,
+      content: `本次将全量覆盖「${user.name}」的部门绑定，保存后共保留 ${buildDeptIds().length} 个部门，未保留的部门将被解除绑定，是否继续？`,
       okText: '继续保存',
       cancelText: '再看看',
       onOk: doSave,
@@ -584,7 +528,7 @@ export default function UserRoleAssignModal({
 
   return (
     <DraggableModal
-      title={`分配角色：${user?.name ?? ''}${
+      title={`分配部门：${user?.name ?? ''}${
         user?.account ? `（${user.account}）` : ''
       }`}
       open={open}
@@ -604,17 +548,16 @@ export default function UserRoleAssignModal({
       }}
     >
       <div className="user-assign-tip">
-        勾选角色即授权（勾选分组将选中组内全部角色）；保存为全量覆盖，未保留的角色将被解除绑定；已停用角色在右侧「历史授权」区，移除标签即解除绑定。
+        勾选部门即授权（勾选上级将选中其全部下级）；保存为全量覆盖，未保留的部门将被解除绑定；右侧「历史绑定」为已不在部门树中的历史授权，移除标签即解除绑定。
       </div>
 
-      {/* 左右双栏：左=树形勾选，右=已选实时汇总（对齐 AssignMenuModal） */}
       <div className="user-assign-body">
         <div className="user-assign-left">
           <div className="user-tree-toolbar">
             <Input
               allowClear
               className="user-tree-toolbar__search"
-              placeholder="搜索角色名称 / 编码"
+              placeholder="搜索部门名称"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
             />
@@ -635,7 +578,7 @@ export default function UserRoleAssignModal({
             </Button>
           </div>
           <Spin spinning={loading}>
-            {/* ★修复⑥：固定高——搜索过滤不缩框，内容框内滚动 */}
+            {/* ★修复⑦：固定高——搜索过滤不缩框，内容框内滚动 */}
             <div
               className="user-tree-box"
               style={{
@@ -647,7 +590,7 @@ export default function UserRoleAssignModal({
               {filteredTree.length > 0 ? (
                 <Tree
                   checkable
-                  checkStrictly={false} // 级联：勾分组=全选组内角色
+                  checkStrictly={false} // 级联：勾父=全选子树（语义见文件头①；需独立勾选改 true）
                   selectable={false}
                   expandedKeys={displayExpanded}
                   onExpand={(keys) => {
@@ -655,7 +598,7 @@ export default function UserRoleAssignModal({
                   }}
                   treeData={filteredTree}
                   checkedKeys={checkedKeys}
-                  onCheck={handleCheck} // ★修复⑦：搜索态勾选安全（隐藏保留+级联补齐/裁剪）
+                  onCheck={handleCheck} // ★修复⑧：搜索态勾选安全（隐藏保留+级联补齐/裁剪）
                 />
               ) : (
                 !loading && (
@@ -666,9 +609,9 @@ export default function UserRoleAssignModal({
                       color: '#999',
                     }}
                   >
-                    暂无可用角色
+                    暂无部门数据
                     <div style={{ fontSize: 12, marginTop: 8 }}>
-                      请先在角色管理中创建并启用角色
+                      请先在部门管理中维护部门
                     </div>
                   </div>
                 )
@@ -677,13 +620,12 @@ export default function UserRoleAssignModal({
           </Spin>
         </div>
 
-        {/* 右侧已选面板（实时联动，点击 Tag 可移除） */}
         <div className="user-assign-right">
           <div className="user-assign-right__title">
-            已选角色
+            已选部门
             <span className="user-assign-right__count">{selectedCount}</span>
           </div>
-          {/* ★修复⑥：固定高——勾选 Tag 增多只在框内滚动，弹窗不变高 */}
+          {/* ★修复⑦：固定高——勾选 Tag 增多只在框内滚动，弹窗不变高 */}
           <div
             className="user-assign-right__list"
             style={{
@@ -695,11 +637,11 @@ export default function UserRoleAssignModal({
             {selectedGroups.length === 0 ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="左侧勾选角色后，此处实时汇总"
+                description="左侧勾选部门后，此处实时汇总"
               />
             ) : (
               selectedGroups.map((g) => (
-                <div key={g.group} className="user-assign-group">
+                <div key={g.key} className="user-assign-group">
                   <div className="user-assign-group__label">
                     {g.label}
                     <span className="user-assign-group__num">
@@ -715,7 +657,7 @@ export default function UserRoleAssignModal({
                           closable
                           onClose={(e) => {
                             e.preventDefault(); // 阻断默认关闭动画，走受控移除
-                            removeSelected(it);
+                            removeSelected(g, it);
                           }}
                         >
                           {it.name}
