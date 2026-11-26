@@ -20,6 +20,7 @@ import { App, Button, Input, Modal, Select, Space, Tooltip } from 'antd';
 import { useRef, useState } from 'react';
 import FillTable from '@/components/FillTable';
 import PageFill from '@/components/PageFill';
+import { invalidateMiMap } from '@/hooks/useMi';
 import {
   buildMiIndex,
   deleteMi,
@@ -376,6 +377,7 @@ export default function MiManage() {
         onClose={() => setFormOpen(false)}
         onSaved={() => {
           setFormOpen(false);
+          invalidateMiMap();
           actionRef.current?.reload();
         }}
       />

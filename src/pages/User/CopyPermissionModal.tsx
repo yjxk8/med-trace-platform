@@ -23,6 +23,7 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import DraggableModal from '@/components/DraggableModal';
+import { useDict } from '@/hooks/useDict';
 import { getRolePage } from '@/services/org/role'; // ★对齐点①:角色分页函数,导出名按 role.ts 实际调整
 import {
   type CopyPermissionResult,
@@ -38,6 +39,7 @@ import {
 } from '@/services/org/user';
 import { getMiId } from '@/services/tenant';
 import CopyPermissionResultModal from './CopyPermissionResultModal';
+import { USER_DICT } from './dictCodes';
 
 /** 角色 status:1 启用 2 停用(§6;停用仍复制仅打标)——若 role.ts 已有枚举可替换 */
 const ROLE_STATUS_STOP = '2';
@@ -66,7 +68,13 @@ export default function CopyPermissionModal({
   const [roleMap, setRoleMap] = useState<
     Map<number, { name: string; status: string }>
   >(new Map());
-
+  const { batchTranslate } = useDict();
+  const [postLabels, setPostLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    batchTranslate(USER_DICT.post)
+      .then(setPostLabels)
+      .catch(() => {});
+  }, []);
   // 目标选择(远程搜索多选):optMap 只增不减(防已选项因换词丢标签),searchHits=最新命中
   const [targets, setTargets] = useState<number[]>([]);
   const [optMap, setOptMap] = useState<
@@ -259,7 +267,9 @@ export default function CopyPermissionModal({
             {detail?.account || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="岗位">
-            {detail?.post || '-'}
+            {detail?.post
+              ? (postLabels[String(detail.post)] ?? detail.post)
+              : '-'}
           </Descriptions.Item>
           <Descriptions.Item label="机构">{sourceOrgName}</Descriptions.Item>
         </Descriptions>

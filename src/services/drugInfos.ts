@@ -154,3 +154,31 @@ export async function setDrugUseStatus(
 export async function voidDrug(id: number): Promise<{ message: string }> {
   return bizRequest(`/api/drug-infos/${id}`, { method: 'DELETE' });
 }
+
+/**
+ * 批量操作结果（部分成功模式）
+ * ⚠️ 字段名以后端 DrugInfosBatchStatusVO 实际定义为准：
+ *    若后端用的是别的命名（如 successList/failInfos），只改本 interface + 下面无转换逻辑，
+ *    消费方（index.tsx 的 res.successCount/failCount/failList）不动
+ */
+export interface DrugBatchOpResult {
+  message?: string;
+  successCount: number;
+  failCount: number;
+  failList?: { id: number; reason: string }[];
+}
+
+/**
+ * 批量启停药品：POST /api/drug-infos/batch-status
+ * 语义（与后端 Controller @PostMapping("/batch-status") 对齐）：
+ * 逐条处理、部分成功、不整单回滚；入参走 @RequestBody → bizRequest 用 data
+ */
+export async function batchSetDrugUseStatus(params: {
+  drugIds: number[];
+  drugUseStatus: 0 | 1;
+}): Promise<DrugBatchOpResult> {
+  return bizRequest<DrugBatchOpResult>('/api/drug-infos/batch-status', {
+    method: 'POST',
+    data: params,
+  });
+}

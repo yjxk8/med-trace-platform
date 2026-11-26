@@ -1,35 +1,12 @@
 /**
  * 用户管理(列表页)—— 范式对齐「药品库存 / 字典管理 / 角色管理」:
  * PageFill 骨架 + 白卡 + FillTable(ProTable request 模式) + App.useApp message
- * 契约:v3 终版(新 key:account/name/sex/phone/post/position/level/status/miId)
- *
- * 当前态(2026-11-17 v2):
- * ① 筛选区仅 关键字/状态(类型/租户类型搜索项移除——产品定版;query 少传参数零风险,
- *    §3.2 query 全可选,后端零改动);已选条件 Tag 行同步收敛为 关键字/状态;
- *    ★关键字仍支持拼音码检索(后端 keyword 匹配 姓名/账号/手机号/拼音码,列虽不展示但可搜)
- * ② 列定版(2026-11-17):「所属机构」列移除(列表恒锁定登录机构,列值冗余;
- *    数据过滤零变化,miId 恒注入);「拼音码」列移除(产品定版:拼音码仅编辑弹窗展示);
- *    「处方类别」列新增(page 响应已含 prescClass,零后端改动)
- * ③ .user-table-fill flex 链路(index.less):表格内部滚动 + 表头 sticky + 分页钉底;
- *    列宽全部百分比(tableLayout=fixed),100% 撑满容器不出横向滚动条;
- * ④ 分页固定每页 10 行、关闭页大小切换(对齐角色页);
- * ⑤ 空状态引导「新增用户」;
- * ⑥ 确认框失败保持开启:removeUser / toggleStatus 的 onOk 内 try/catch + throw(对齐角色页);
- * ⑦ 操作列:编辑/锁定|解锁/重置密码平铺,分配角色/分配部门/复制权限/删除收 Dropdown;
- * ⑧ 编辑弹窗 pyCode 回显+回传见 UserFormModal(2026-11-17 新契约,编辑页保留拼音码);
- * ⑨ ★重置密码一键直达(2026-11-17):不弹对话框,点图标直接调 resetUserPassword(id)
- *    (不传 newPwd → 后端重置为固定密码 123456,loginStatus=3 下次登录引导改密);
- *    成功仅 toast 固定值口径,绝不写「新密码已发送」;ResetPwdModal 已移除。
- *
- * 红线(交接文档沿用):
- * - 防自锁:后端无守卫(§八-3)→ 自己的行隐藏「锁定/解锁」「删除」,账号旁标「当前用户」
- * - 锁定 ≠ 踢下线 / 软删 ≠ 立即掉线:确认文案不写「立即下线/掉线」
- * - 删除用户同步解除全部角色绑定(契约 §4.1,确认文案已告知)
- * - 机构数据域不变:列表恒锁定登录所选机构(恒注入 miId);机构下拉筛选暂无需求
- * - ★机构数据域响应式:useOrgId 事件驱动;切机构清筛选+重置页码重查(保险通道;
- *   常规切机构走 OrgSwitcher 整页刷新,组件重挂);无机构上下文不发请求,宁缺勿漏
- *
- * ⚠️ FillTable 非泛型:回调参数显式注解(TS7006)
+ * 契约:v3 终版 + 批量操作四接口(2026-11-18 后端已落地)
+ * ★2026-11-19 工具条/交互定版(⑩~⑲ 沿用:多选/两段式布局/防自锁/清选中/部分成功结果/
+ *   单击行勾选双击编辑/⑲ 表体定高测量契约)
+ * ★★遗留#2 已落地(本轮):「岗位」「职称/级别」两列字典翻译——
+ *   batchTranslate 一次拉全量建 {value:label}(平台级字典与机构无关,挂载一次即可),
+ *   列渲染同步匹配;未命中的历史自由文本原样回显;严禁列 formatter 逐行调 /translate(坑#9)
  */
 import {
   ApartmentOutlined,
@@ -39,39 +16,33 @@ import {
   DeleteOutlined,
   EditOutlined,
   KeyOutlined,
-  MoreOutlined,
   PlusOutlined,
+  ReloadOutlined,
   StopOutlined,
 } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { useModel } from '@umijs/max';
-import type { MenuProps } from 'antd';
-import {
-  App,
-  Button,
-  Dropdown,
-  Empty,
-  Input,
-  Modal,
-  Select,
-  Space,
-  Tag,
-  Tooltip,
-} from 'antd';
+import { App, Button, Empty, Input, Modal, Select, Space, Tag } from 'antd';
+import type { CSSProperties, Key, MouseEvent as ReactMouseEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import FillTable from '@/components/FillTable';
 import PageFill from '@/components/PageFill';
+import { useDict } from '@/hooks/useDict';
 import {
-  deleteUser,
+  type BatchOpResult,
+  batchDeleteUsers,
+  batchSetUserStatus,
   getUserDetail,
   pageUser,
-  resetUserPassword, // ★⑨:一键重置直达(service 契约不变,不传 newPwd → 123456)
-  setUserStatus,
+  resetUserPassword,
   USER_STATUS,
   type UserVO,
 } from '@/services/org/user';
 import { useOrgId } from '@/utils/orgContext';
+import BatchAssignModal from './BatchAssignModal';
+import BatchResultModal from './BatchResultModal';
 import CopyPermissionModal from './CopyPermissionModal';
+import { USER_DICT } from './dictCodes';
 import {
   fmtFull,
   renderSex,
@@ -84,15 +55,10 @@ import UserFormModal from './UserFormModal';
 import UserRoleAssignModal from './UserRoleAssignModal';
 import './index.less';
 
-/** 已选条件支持的筛选键(2026-11-17:类型/租户类型搜索项移除,仅剩 关键字/状态) */
-type FilterKey = 'keyword' | 'status';
+/** 表头+分页+边距扣减常数(微调口诀:分页被裁 → 调大;下方见缝 → 调小) */
+const TABLE_CHROME = 96;
 
-interface ActiveFilter {
-  key: FilterKey;
-  label: string;
-}
-
-/** Select 选项反查 label(S() 归一化,对齐 shared 红线);列表处方类别列复用 */
+/** Select 选项反查 label(处方类别列复用,本地常量不走字典) */
 function findLabel(
   opts: { value: string | number; label: string }[],
   v: string | number | undefined | null,
@@ -103,76 +69,73 @@ function findLabel(
 
 export default function UserManage() {
   const { message } = App.useApp();
-  /** 当前登录用户(防自锁):登录页 setInitialState({ token, currentUser }) 写入,
-   * 与登录态同源;v3 起字段为 id/account(原 uId/uAccount 作废) */
   const { initialState } = useModel('@@initialState');
   const self = initialState?.currentUser;
-
-  const [copySource, setCopySource] = useState<UserVO | null>(null);
-
-  // ===== 机构数据域(2026-11-12 口径 · 响应式版):列表锁定登录所选机构,非本机构用户不展示 =====
-  /** 当前机构 miId(与 X-Org-Id / 表单 miId 同源):useOrgId 事件驱动,
-   * 切机构即时重渲染(软切换保险通道;常规路径为 OrgSwitcher 整页刷新) */
-  const orgId = useOrgId();
-  const miId = orgId != null && Number(orgId) > 0 ? Number(orgId) : null;
-  /** ProTable request 可能捕获首帧闭包 → ref 恒读最新(防陈旧闭包,对齐 filterRef 范式) */
-  const miIdRef = useRef<number | null>(miId);
-  miIdRef.current = miId;
-  // (机构名 useMemo 已随「所属机构」列移除;数据域 miId 恒注入不变)
-
-  const actionRef = useRef<ActionType | undefined>(undefined);
-
-  // ===== 筛选(受控态 + 快照 ref,查询时生效——对齐 filterRef 范式;仅 关键字/状态)=====
-  const [keyword, setKeyword] = useState('');
-  const [status, setStatus] = useState<string | undefined>(undefined);
-  const filterRef = useRef<{ keyword?: string; status?: string }>({});
-
-  // ===== 机构切换响应(保险通道):清筛选 + 重置页码重查;旧机构筛选不带入新机构 =====
-  const prevMiRef = useRef<number | null>(miId);
-  useEffect(() => {
-    if (prevMiRef.current === miId) return;
-    prevMiRef.current = miId;
-    if (miId == null) return; // 无机构:请求防御层已返回空,不必再触发查询
-    setKeyword('');
-    setStatus(undefined);
-    filterRef.current = {};
-    actionRef.current?.reloadAndRest?.();
-  }, [miId]);
-
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<UserVO | null>(null);
-  // (★⑨ resetTarget 状态已删:重置密码一键直达,不再经弹窗)
-  const [assignOpen, setAssignOpen] = useState(false);
-  const [assignUser, setAssignUser] = useState<UserVO | null>(null);
-  const [deptOpen, setDeptOpen] = useState(false);
-  const [deptUser, setDeptUser] = useState<UserVO | null>(null);
-
-  /** 防自锁:id 或账号命中当前登录用户;self 取不到时守卫自动失效(不阻塞) */
+  /** 防自锁:id 或账号命中当前登录人;self 取不到时守卫失效(不阻塞) */
   const isSelf = (r: UserVO) =>
     (self?.id != null && Number(r.id) === Number(self.id)) ||
     (!!self?.account && r.account === self.account);
 
-  /** 已选条件 Tag 数据源(随筛选态派生,单个可移除;对齐角色页) */
-  const activeFilters = useMemo<ActiveFilter[]>(() => {
-    const arr: ActiveFilter[] = [];
-    const k = keyword.trim();
-    if (k) arr.push({ key: 'keyword', label: `关键字:${k}` });
-    if (status != null)
-      arr.push({
-        key: 'status',
-        label: `状态:${findLabel(USER_STATUS_OPTIONS, status)}`,
-      });
-    return arr;
-  }, [keyword, status]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [copySource, setCopySource] = useState<UserVO | null>(null);
 
-  const doSearch = () => {
-    filterRef.current = {
-      keyword: keyword.trim() || undefined,
-      status,
+  // ===== ★遗留#2 字典翻译(post/level 存字典 code;batchTranslate 一次拉全量本地匹配)=====
+  const { batchTranslate } = useDict();
+  const [postLabels, setPostLabels] = useState<Record<string, string>>({});
+  const [levelLabels, setLevelLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    // 平台级字典(PT0.2.x)与机构无关,挂载一次;失败静默 → 列显示原始 code,不阻断
+    batchTranslate(USER_DICT.post)
+      .then(setPostLabels)
+      .catch(() => {});
+    batchTranslate(USER_DICT.level)
+      .then(setLevelLabels)
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ===== 机构数据域(响应式版) =====
+  const orgId = useOrgId();
+  const miId = orgId != null && Number(orgId) > 0 ? Number(orgId) : null;
+  const miIdRef = useRef<number | null>(miId);
+  miIdRef.current = miId;
+  const actionRef = useRef<ActionType | undefined>(undefined);
+
+  // ===== ★⑲ 表体定高测量契约 =====
+  const [tableBodyHeight, setTableBodyHeight] = useState(360);
+  const tableFillRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = tableFillRef.current;
+    if (!el) return;
+    const calc = () => {
+      const byParent = el.clientHeight - TABLE_CHROME;
+      const byViewport = window.innerHeight - 190;
+      setTableBodyHeight(Math.max(200, Math.min(byParent, byViewport)));
     };
+    calc();
+    const ro = new ResizeObserver(calc);
+    ro.observe(el);
+    window.addEventListener('resize', calc);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', calc);
+    };
+  }, []);
+  const tableFillStyle = {
+    flex: 1,
+    minHeight: 0,
+    height: '100%',
+    position: 'relative',
+    overflow: 'hidden',
+    '--ubody-h': `${tableBodyHeight}px`,
+  } as CSSProperties;
+
+  // ===== 筛选态(state 控 UI,filterRef 供 request 读取) =====
+  const [keyword, setKeyword] = useState('');
+  const [status, setStatus] = useState<string | undefined>(undefined);
+  const filterRef = useRef<{ keyword?: string; status?: string }>({});
+  const doSearch = () => {
+    filterRef.current = { keyword: keyword.trim() || undefined, status };
     actionRef.current?.reloadAndRest?.();
   };
-
   const doReset = () => {
     setKeyword('');
     setStatus(undefined);
@@ -180,18 +143,83 @@ export default function UserManage() {
     actionRef.current?.reloadAndRest?.();
   };
 
-  /** 已选条件 Tag 单个移除(同步 filterRef 并重置页码;对齐角色页) */
-  const removeFilter = (key: FilterKey) => {
-    if (key === 'keyword') setKeyword('');
-    else if (key === 'status') setStatus(undefined);
-    const next = { ...filterRef.current };
-    delete next[key];
-    filterRef.current = next;
-    actionRef.current?.reloadAndRest?.();
+  // ===== 行选择(★⑬ 任何 request 清空;★⑱ 单击行切换) =====
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [selectedRows, setSelectedRows] = useState<UserVO[]>([]);
+  const clearSelection = () => {
+    setSelectedKeys([]);
+    setSelectedRows([]);
   };
+  const rowSelection = {
+    selectedRowKeys: selectedKeys,
+    columnWidth: 32,
+    onChange: (keys: readonly Key[], rows: readonly UserVO[]) => {
+      setSelectedKeys(keys.map(String));
+      setSelectedRows([...rows]);
+    },
+  };
+  const toggleRow = (r: UserVO) => {
+    const key = String(r.id);
+    setSelectedKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+    setSelectedRows((prev) =>
+      prev.some((x) => String(x.id) === key)
+        ? prev.filter((x) => String(x.id) !== key)
+        : [...prev, r],
+    );
+  };
+  const onRow = (r: UserVO) => ({
+    onClick: (e: ReactMouseEvent<HTMLElement>) => {
+      const el = e.target as HTMLElement;
+      if (el.closest('.ant-table-selection-column')) return;
+      toggleRow(r);
+    },
+    onDoubleClick: () => {
+      openEdit(r);
+    },
+  });
 
-  /** 编辑:行数据先上屏,详情覆盖回显(防旧行缺字段 → 空表单/undefined);
-   * pyCode 回显依赖 detail 响应(2026-11-17 后端已补),见 UserFormModal */
+  // ===== 机构切换响应(保险通道) =====
+  const prevMiRef = useRef<number | null>(miId);
+  useEffect(() => {
+    if (prevMiRef.current === miId) return;
+    prevMiRef.current = miId;
+    if (miId == null) return;
+    setKeyword('');
+    setStatus(undefined);
+    filterRef.current = {};
+    clearSelection();
+    actionRef.current?.reloadAndRest?.();
+  }, [miId]);
+
+  // ===== 弹窗状态 =====
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<UserVO | null>(null);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignUser, setAssignUser] = useState<UserVO | null>(null);
+  const [deptOpen, setDeptOpen] = useState(false);
+  const [deptUser, setDeptUser] = useState<UserVO | null>(null);
+  const [batchAssignOpen, setBatchAssignOpen] = useState(false);
+  const [batchKind, setBatchKind] = useState<'role' | 'dept'>('role');
+  const [batchUsers, setBatchUsers] = useState<UserVO[]>([]);
+  const [batchResult, setBatchResult] = useState<{
+    title: string;
+    res: BatchOpResult;
+  } | null>(null);
+
+  /** ★⑫ 防自锁:批量资格集剔除当前登录人 */
+  const operableRows = useMemo(
+    () => selectedRows.filter((r) => !isSelf(r)),
+    [selectedRows],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
+  const canLock =
+    operableRows.length > 0 &&
+    operableRows.every((r) => String(r.status) === USER_STATUS.NORMAL);
+  const canUnlock =
+    operableRows.length > 0 &&
+    operableRows.every((r) => String(r.status) !== USER_STATUS.NORMAL);
+
   const openEdit = (r: UserVO) => {
     setEditing(r);
     setFormOpen(true);
@@ -200,52 +228,6 @@ export default function UserManage() {
       .catch(() => {});
   };
 
-  // ===== 行操作(失败 toast 后端原文 + throw 保持确认框开启,对齐角色页)=====
-  const removeUser = (r: UserVO) => {
-    Modal.confirm({
-      title: `删除账号「${r.name}」?`,
-      content:
-        '删除后该账号将无法登录,账号名将被占用不可复用(含已删除账号);同时将同步解除其全部角色绑定,确定删除?',
-      okText: '删除',
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        try {
-          const res = await deleteUser(r.id);
-          message.success(res?.message || '删除成功');
-          actionRef.current?.reload();
-        } catch (e) {
-          message.error((e as Error).message);
-          throw e; // 保持确认框开启(对齐角色页约定)
-        }
-      },
-    });
-  };
-
-  const toggleStatus = (r: UserVO) => {
-    const lock = String(r.status) === USER_STATUS.NORMAL;
-    Modal.confirm({
-      title: lock ? `锁定账号「${r.name}」?` : `解锁账号「${r.name}」?`,
-      content: lock ? '锁定后该账号将无法登录。' : '解锁后该账号可正常登录。',
-      okText: lock ? '锁定' : '解锁',
-      okButtonProps: lock ? { danger: true } : undefined,
-      onOk: async () => {
-        try {
-          const res = await setUserStatus(r.id, lock ? 2 : 1);
-          message.success(res?.message || (lock ? '已锁定' : '已解锁'));
-          actionRef.current?.reload();
-        } catch (e) {
-          message.error((e as Error).message);
-          throw e; // 保持确认框开启(对齐角色页约定)
-        }
-      },
-    });
-  };
-
-  /** ★⑨ 重置密码(2026-11-17:确认对话框 + 一键重置):
-   * 点图标先弹确认(说明后果)→ 确认后调 resetUserPassword(id)
-   * (不传 newPwd → 后端重置为固定密码 123456,loginStatus=3 下次登录引导改密);
-   * 成功仅 toast 固定值口径,绝不写「新密码已发送」;
-   * 失败 toast 后端原文 + throw 保持确认框开启(对齐 removeUser/toggleStatus 约定) */
   const resetPwd = (r: UserVO) => {
     Modal.confirm({
       title: `重置密码「${r.name}」?`,
@@ -259,18 +241,88 @@ export default function UserManage() {
           actionRef.current?.reload();
         } catch (e) {
           message.error((e as Error).message);
-          throw e; // 保持确认框开启(对齐角色页约定)
+          throw e;
         }
       },
     });
   };
 
-  // ===== 列定义(数组显式泛型;列宽百分比合计 100%)=====
+  // ===== 批量操作(部分成功模式) =====
+  const batchToggleStatus = (lock: boolean) => {
+    if (operableRows.length === 0) return;
+    const ids = operableRows.map((r) => Number(r.id));
+    Modal.confirm({
+      title: lock ? `锁定 ${ids.length} 个账号?` : `解锁 ${ids.length} 个账号?`,
+      content: lock
+        ? '锁定后这些账号将无法登录(不含当前登录人)。'
+        : '解锁后这些账号可正常登录。',
+      okText: lock ? '锁定' : '解锁',
+      okButtonProps: lock ? { danger: true } : undefined,
+      onOk: async () => {
+        try {
+          const res = await batchSetUserStatus({
+            userIds: ids,
+            status: lock ? 2 : 1,
+          });
+          clearSelection();
+          actionRef.current?.reload();
+          setBatchResult({
+            title: lock ? '批量锁定结果' : '批量解锁结果',
+            res,
+          });
+        } catch (e) {
+          message.error((e as Error).message);
+          throw e;
+        }
+      },
+    });
+  };
+  const batchRemove = () => {
+    if (operableRows.length === 0) return;
+    const ids = operableRows.map((r) => Number(r.id));
+    Modal.confirm({
+      title: `删除 ${ids.length} 个账号?`,
+      content:
+        '删除后这些账号将无法登录,账号名将被占用不可复用(含已删除账号);同时将同步解除其全部角色/部门/用户组绑定(不含当前登录人),确定删除?',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          const res = await batchDeleteUsers({ userIds: ids });
+          clearSelection();
+          actionRef.current?.reload();
+          setBatchResult({ title: '批量删除结果', res });
+        } catch (e) {
+          message.error((e as Error).message);
+          throw e;
+        }
+      },
+    });
+  };
+  const openAssign = (kind: 'role' | 'dept') => {
+    if (selectedRows.length === 1) {
+      const row = selectedRows[0];
+      if (!row) return;
+      if (kind === 'role') {
+        setAssignUser(row);
+        setAssignOpen(true);
+      } else {
+        setDeptUser(row);
+        setDeptOpen(true);
+      }
+      return;
+    }
+    setBatchKind(kind);
+    setBatchUsers(selectedRows);
+    setBatchAssignOpen(true);
+  };
+
+  // ===== 列定义(★⑯ 像素宽;post/level 已接字典翻译) =====
   const columns: ProColumns<UserVO>[] = [
     {
       title: '工号',
       dataIndex: 'account',
-      width: '9%',
+      width: 130,
       align: 'center',
       render: (_, r) => (
         <Space size={4}>
@@ -282,7 +334,7 @@ export default function UserManage() {
     {
       title: '姓名',
       dataIndex: 'name',
-      width: '8%',
+      width: 110,
       align: 'center',
       ellipsis: true,
       render: (_, r) => r.name || '-',
@@ -290,29 +342,30 @@ export default function UserManage() {
     {
       title: '性别',
       dataIndex: 'sex',
-      width: '6%',
+      width: 70,
       align: 'center',
       render: (_, r) => renderSex(r.sex),
     },
     {
       title: '手机号',
       dataIndex: 'phone',
-      width: '11%',
+      width: 140,
       align: 'center',
       render: (_, r) => r.phone || '-',
     },
     {
       title: '岗位',
       dataIndex: 'post',
-      width: '9%',
+      width: 110,
       align: 'center',
       ellipsis: true,
-      render: (_, r) => r.post || '-', // 字典 code,【遗留#2】接入后换渲染
+      // ★遗留#2 已落地:本地 Map 翻译;历史自由文本/未命中 code → 原样回显
+      render: (_, r) => (r.post ? (postLabels[String(r.post)] ?? r.post) : '-'),
     },
     {
       title: '职务',
       dataIndex: 'position',
-      width: '9%',
+      width: 110,
       align: 'center',
       ellipsis: true,
       render: (_, r) => r.position || '-',
@@ -320,16 +373,16 @@ export default function UserManage() {
     {
       title: '职称/级别',
       dataIndex: 'level',
-      width: '9%',
+      width: 110,
       align: 'center',
       ellipsis: true,
-      render: (_, r) => r.level || '-', // 字典 code,【遗留#2】
+      render: (_, r) =>
+        r.level ? (levelLabels[String(r.level)] ?? r.level) : '-',
     },
-    // ★处方类别列(2026-11-17 新增):1麻醉 2一类精神 3二类精神 4普通;空值 '-'
     {
       title: '处方类别',
       dataIndex: 'prescClass',
-      width: '8%',
+      width: 120,
       align: 'center',
       ellipsis: true,
       render: (_, r) =>
@@ -338,125 +391,16 @@ export default function UserManage() {
     {
       title: '状态',
       dataIndex: 'status',
-      width: '7%',
+      width: 90,
       align: 'center',
       render: (_, r) => renderStatus(r.status),
     },
-    // (2026-11-17:「所属机构」列移除——列表恒锁定登录机构,列值冗余;「拼音码」列移除
-    //  ——产品定版:拼音码仅编辑弹窗展示;关键字检索仍支持拼音码,后端 keyword 匹配不变)
     {
       title: '创建时间',
       dataIndex: 'createTime',
-      width: '14%',
+      width: 170,
       align: 'center',
       render: (_, r) => fmtFull(r.createTime),
-    },
-    {
-      title: '操作',
-      valueType: 'option',
-      width: '10%',
-      align: 'center',
-      // 口径对齐角色管理页:≤4 个平铺,超过 4 个第 4 个起收进「更多」Dropdown——
-      // 编辑/锁定|解锁/重置密码平铺,分配角色/分配部门/复制权限/删除收 Dropdown
-      // ⚠️ 第一参是 dom 节点,必须占位 _(历史坑)
-      render: (_, r) => {
-        const items: MenuProps['items'] = [
-          {
-            key: 'assign',
-            icon: <ApartmentOutlined />,
-            label: '分配角色',
-            onClick: () => {
-              setAssignUser(r);
-              setAssignOpen(true);
-            },
-          },
-          {
-            key: 'dept',
-            icon: <ClusterOutlined />,
-            label: '分配部门',
-            onClick: () => {
-              setDeptUser(r);
-              setDeptOpen(true);
-            },
-          },
-        ];
-        items.push({
-          key: 'copy',
-          icon: <CopyOutlined />,
-          label: '复制权限',
-          onClick: () => setCopySource(r),
-        });
-        if (!isSelf(r)) {
-          items.push({
-            key: 'delete',
-            icon: <DeleteOutlined />,
-            danger: true,
-            label: '删除',
-            onClick: () => removeUser(r),
-          });
-        }
-        return (
-          <Space size={0}>
-            <Tooltip title="编辑">
-              <Button
-                type="text"
-                size="small"
-                style={{ padding: '0 4px' }}
-                icon={
-                  <EditOutlined style={{ color: '#8c8c8c', fontSize: 14 }} />
-                }
-                onClick={() => openEdit(r)}
-              />
-            </Tooltip>
-            {!isSelf(r) && (
-              <Tooltip
-                title={
-                  String(r.status) === USER_STATUS.NORMAL ? '锁定' : '解锁'
-                }
-              >
-                <Button
-                  type="text"
-                  size="small"
-                  style={{ padding: '0 4px' }}
-                  icon={
-                    String(r.status) === USER_STATUS.NORMAL ? (
-                      <StopOutlined
-                        style={{ color: '#8c8c8c', fontSize: 14 }}
-                      />
-                    ) : (
-                      <CheckCircleOutlined
-                        style={{ color: '#52c41a', fontSize: 14 }}
-                      />
-                    )
-                  }
-                  onClick={() => toggleStatus(r)}
-                />
-              </Tooltip>
-            )}
-            <Tooltip title="重置密码(重置为 123456)">
-              <Button
-                type="text"
-                size="small"
-                style={{ padding: '0 4px' }}
-                icon={
-                  <KeyOutlined style={{ color: '#8c8c8c', fontSize: 14 }} />
-                }
-                onClick={() => resetPwd(r)} // ★⑨一键直达:不弹对话框
-              />
-            </Tooltip>
-            <Dropdown menu={{ items }}>
-              <Button
-                type="text"
-                size="small"
-                style={{ padding: '0 4px' }}
-                icon={
-                  <MoreOutlined style={{ color: '#8c8c8c', fontSize: 14 }} />
-                }
-              />
-            </Dropdown>
-          </Space>
-        );
-      },
     },
   ];
 
@@ -465,7 +409,9 @@ export default function UserManage() {
       <div
         style={{
           flex: 1,
-          minHeight: 0, // flex 链路生效前提(分页钉底布局)
+          minHeight: 0,
+          height: '100%',
+          overflow: 'hidden',
           background: '#fff',
           borderRadius: 8,
           padding: '12px 16px 8px',
@@ -473,15 +419,13 @@ export default function UserManage() {
           flexDirection: 'column',
         }}
       >
-        {/* 筛选区:keyword / 状态(2026-11-17:类型/租户类型搜索项移除,产品定版);
-            ★keyword 仍支持拼音码检索(后端匹配 姓名/账号/手机号/拼音码);
-            机构为固定数据域(恒注入 miId,不进筛选/已选条件) */}
+        {/* 筛选区 */}
         <div
           style={{ display: 'flex', gap: 8, marginBottom: 8, flexShrink: 0 }}
         >
           <Input
             allowClear
-            style={{ width: 240 }}
+            style={{ width: 220 }}
             placeholder="姓名 / 账号 / 手机号 / 拼音码"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
@@ -499,54 +443,124 @@ export default function UserManage() {
             查询
           </Button>
           <Button onClick={doReset}>重置</Button>
+        </div>
+
+        {/* 工具条 */}
+        <div className="user-toolbar">
+          <span className="user-toolbar__title">用户列表</span>
           <Button
             type="primary"
             icon={<PlusOutlined />}
-            style={{ marginLeft: 'auto' }}
-            disabled={miId == null} // ★无机构上下文禁止新增(双保险之一,弹窗内还有守卫)
+            title="新增用户"
+            disabled={miId == null}
             onClick={() => {
               setEditing(null);
               setFormOpen(true);
             }}
-          >
-            新增用户
-          </Button>
+          />
+          <span className="user-toolbar__divider" />
+          <Button
+            type="text"
+            icon={<EditOutlined />}
+            title="编辑（选中 1 项，或双击行）"
+            disabled={selectedKeys.length !== 1}
+            onClick={() => {
+              const row = selectedRows[0];
+              if (row) openEdit(row);
+            }}
+          />
+          <Button
+            type="text"
+            icon={<ApartmentOutlined />}
+            title="分配角色"
+            disabled={selectedKeys.length === 0}
+            onClick={() => openAssign('role')}
+          />
+          <Button
+            type="text"
+            icon={<ClusterOutlined />}
+            title="分配部门"
+            disabled={selectedKeys.length === 0}
+            onClick={() => openAssign('dept')}
+          />
+          <Button
+            type="text"
+            icon={<CopyOutlined />}
+            title="复制权限（选中 1 项）"
+            disabled={selectedKeys.length !== 1}
+            onClick={() => {
+              const row = selectedRows[0];
+              if (row) setCopySource(row);
+            }}
+          />
+          <span className="user-toolbar__divider" />
+          <Button
+            type="text"
+            icon={<KeyOutlined />}
+            title="重置密码（选中 1 项）"
+            disabled={selectedKeys.length !== 1}
+            onClick={() => {
+              const row = selectedRows[0];
+              if (row) resetPwd(row);
+            }}
+          />
+          <Button
+            type="text"
+            icon={<StopOutlined />}
+            title="锁定选中账号"
+            disabled={!canLock}
+            onClick={() => batchToggleStatus(true)}
+          />
+          <Button
+            type="text"
+            icon={<CheckCircleOutlined />}
+            title="解锁选中账号"
+            disabled={!canUnlock}
+            onClick={() => batchToggleStatus(false)}
+          />
+          <span className="user-toolbar__divider" />
+          <Button
+            type="text"
+            danger
+            icon={<DeleteOutlined />}
+            title="删除选中账号"
+            disabled={operableRows.length === 0}
+            onClick={batchRemove}
+          />
+          <Button
+            type="text"
+            icon={<ReloadOutlined />}
+            title="刷新"
+            onClick={() => actionRef.current?.reload()}
+          />
+          {selectedKeys.length > 0 && (
+            <span className="user-toolbar__selchip">
+              已选 {selectedKeys.length} 项<a onClick={clearSelection}>清空</a>
+            </span>
+          )}
         </div>
 
-        {/* 已选条件 Tag(单个移除,移除后页码重置;出现/消失由 flex 自动重分配高度) */}
-        {activeFilters.length > 0 && (
-          <div className="user-filter-tags">
-            <span className="user-filter-tags__label">已选条件:</span>
-            {activeFilters.map((f) => (
-              <Tag
-                key={f.key}
-                closable
-                className="user-filter-tags__item"
-                onClose={() => removeFilter(f.key)}
-              >
-                {f.label}
-              </Tag>
-            ))}
-          </div>
-        )}
-
-        {/* 表格填充区:flex:1 撑满剩余高度;表格内部滚动 + 表头 sticky + 分页钉底(对齐角色页) */}
-        <div className="user-table-fill">
+        {/* ★⑲ 表格填充区 */}
+        <div
+          ref={tableFillRef}
+          className="user-table-fill"
+          style={tableFillStyle}
+        >
           <FillTable
             pro
-            headerTitle="用户列表"
             rowKey={(r: UserVO) => String(r.id)}
             actionRef={actionRef}
             columns={columns}
+            rowSelection={rowSelection}
+            onRow={onRow}
+            tableAlertRender={false}
+            tableAlertOptionRender={false}
             search={false}
-            options={{ reload: true, density: false, setting: false }}
+            options={false}
             cardBordered={false}
-            tableLayout="fixed" // ★固定布局:百分比列宽严格遵守 + ellipsis 生效
-            pagination={{
-              pageSize: 10,
-              defaultPageSize: 10,
-              showSizeChanger: false,
-            }}
+            tableLayout="fixed"
+            scroll={{ x: 1200, y: tableBodyHeight }}
+            pagination={{ pageSize: 20, showSizeChanger: false }}
             locale={{
               emptyText: (
                 <Empty
@@ -571,17 +585,18 @@ export default function UserManage() {
               current?: number;
               pageSize?: number;
             }) => {
-              const cur = miIdRef.current; // ★恒读最新机构(防陈旧闭包)
+              // ★⑬ 任何重查清空选中,防跨页累积误操作
+              clearSelection();
+              const cur = miIdRef.current;
               if (cur == null) {
-                // 无机构上下文防御(常规到不了):不发请求,宁可不展示也不漏全平台数据
                 return { data: [], total: 0, success: false };
               }
               try {
                 const res = await pageUser({
                   page: params.current ?? 1,
-                  size: params.pageSize ?? 10,
-                  miId: cur, // ★锁定登录所选机构(固定数据域,不进 filterRef/已选条件)
-                  ...filterRef.current, // 仅 keyword/status(2026-11-17:类型/租户类型已移除)
+                  size: params.pageSize ?? 20,
+                  miId: cur,
+                  ...filterRef.current,
                 });
                 return { data: res.records, total: res.total, success: true };
               } catch (e) {
@@ -593,13 +608,20 @@ export default function UserManage() {
         </div>
       </div>
 
+      {/* 弹窗群 */}
+      <BatchResultModal
+        open={!!batchResult}
+        title={batchResult?.title ?? ''}
+        result={batchResult?.res ?? null}
+        onClose={() => setBatchResult(null)}
+      />
       <CopyPermissionModal
         open={!!copySource}
         source={copySource}
         onClose={() => setCopySource(null)}
         onDone={() => {
           setCopySource(null);
-          actionRef.current?.reload(); // 用户列表无绑定数列,刷新为幂等保险(§5.4 按需刷新)
+          actionRef.current?.reload();
         }}
       />
       <UserFormModal
@@ -611,7 +633,6 @@ export default function UserManage() {
           actionRef.current?.reload();
         }}
       />
-      {/* (★⑨ ResetPwdModal 已移除:重置密码一键直达,见 resetPwd) */}
       <UserRoleAssignModal
         open={assignOpen}
         user={assignUser}
@@ -624,6 +645,19 @@ export default function UserManage() {
         onClose={() => setDeptOpen(false)}
         onSaved={() => setDeptOpen(false)}
       />
+      <BatchAssignModal
+        open={batchAssignOpen}
+        kind={batchKind}
+        users={batchUsers}
+        onClose={() => setBatchAssignOpen(false)}
+        onDone={() => {
+          setBatchAssignOpen(false);
+          clearSelection();
+          actionRef.current?.reload();
+        }}
+      />
     </PageFill>
   );
 }
+// ★FillTable 透传检查(均在 src/components/FillTable/index.tsx):
+// ① rowSelection;② tableAlertRender/tableAlertOptionRender;③ onRow;④ scroll 原样透传

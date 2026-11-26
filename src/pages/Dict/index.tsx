@@ -1,34 +1,34 @@
 /**
- * 字典管理(左树右表单页)—— 样式/范式对齐「药品库存」页:
- * PageFill 骨架 + 白卡 + FillTable(ProTable request 模式) + App.useApp message
- *
- * 红线:
- * - miId 为后端强校验字段(DictServiceImpl.typePage 实测 500)→ 页面级 fail-fast,
- *   缺失时渲染阻断 Alert,不发无效请求、不刷 500
- * - ★miId 响应式(2026-11-13,对齐 User 页口径):useOrgId 事件驱动,
- *   登录态写入/顶栏切换机构后自动恢复并重载,弃用手动「重试」按钮(旧 useState 快照口径作废);
- *   无机构上下文(平台级/未写入)→ 清残留 + 阻断态指引,宁缺勿漏不串机构
- * - 值域代码(dictValue)/含义(dictLabel) 字符串原样,禁止数值化
- * - 类型树一次全量(size=999,【待确认】后端上限);切换类型 → reloadAndRest 回第 1 页
- * - 删除为物理删除;弹窗文案引导历史引用场景改「停用」
- *
- * ⚠️ FillTable 非泛型:rowKey/onRow/request/showTotal 回调参数必须显式注解(TS7006)
+ * 字典管理页（左右结构·左类型右数据）
+ * 本次调整：
+ * ★1 平台标准数据限制全部放开（用户决策：字典管理权限走页面级授权，前端不再按
+ *   platform 禁用按钮）：类型/字典项的新增、编辑、删除对平台行全部可用；
+ *   编辑态 dictCode/miId disabled 属后端数据锁定（非权限）保留；DataModal 平台提示
+ *   Alert 保留为纯提示（不阻断），提交由后端守卫兜底（4601 指引 toast 透传）
+ * ★2 名称列加粗醒目：fontWeight 600 + 主文本色 rgba(0,0,0,0.88)
+ * 保留：视口层纵向滚动（表头 sticky + 中和 FillTable 内部限高，不依赖其 scroll 行为）、
+ * 自管分页（gotoPage 改 ref→reload）、百分比列宽无横向滚动、通栏钉底分页、
+ * miId 阻断态、删除确认契约原文、4604 并发删除自动刷新
  */
 import {
-  CheckCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   PlusOutlined,
-  StopOutlined,
+  ReloadOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import {
   Alert,
   App,
   Button,
+  Empty,
+  Input,
   Modal,
-  Popconfirm,
+  Pagination,
+  Select,
   Space,
+  Switch,
   Tag,
   Tooltip,
 } from 'antd';
@@ -37,164 +37,263 @@ import FillTable from '@/components/FillTable';
 import PageFill from '@/components/PageFill';
 import { useDict } from '@/hooks/useDict';
 import {
+  DICT_ERR,
   type DictDataVO,
+  type DictItemVO,
   type DictTypeVO,
   deleteDictData,
-  deleteDictType,
+  getBizCode,
+  getDictTypeOptions,
   pageDictData,
-  pageDictType,
   setDictDataStatus,
 } from '@/services/dict';
 import { useOrgId } from '@/utils/orgContext';
+import { STATUS_META } from './constants';
 import DataModal from './DataModal';
-import { fmtFull, isOn } from './shared';
+import { fmtFull, isOn, renderPlatform } from './shared';
+import TypeList from './TypeList';
 import TypeModal from './TypeModal';
-import TypeTree from './TypeTree';
+
+/**
+ * ★视口层滚动样式（作用域限定 .dict-data-viewport）：
+ * 表头吸顶 + 中和内部限高（antd body/FillTable 注入的 max-height、overflow 强制放开），
+ * 滚动条唯一出现在视口层
+ */
+const VIEWPORT_CSS = `
+.dict-data-viewport .ant-table-thead > tr > th,
+.dict-data-viewport .ant-table-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #fafafa;
+}
+.dict-data-viewport .ant-table-body,
+.dict-data-viewport .ant-table-container,
+.dict-data-viewport .ant-table-wrapper {
+  max-height: none !important;
+  overflow: visible !important;
+}
+`;
+
+/** 右栏查询条件快照（filterRef 范式；dictCode 由选中类型 key 重建承载） */
+type DataFilterState = { keyword: string; status?: string };
 
 export default function DictManage() {
   const { message } = App.useApp();
   const { invalidate } = useDict();
 
-  // ===== miId 数据域(响应式版):useOrgId 事件驱动,登录写入/切机构自动恢复 =====
-  /** 当前机构 miId(与 X-Org-Id / 各服务 getMiId 同源);null = 无机构上下文(平台级/未写入) */
   const orgId = useOrgId();
   const miId = orgId != null && Number(orgId) > 0 ? Number(orgId) : null;
 
-  const [types, setTypes] = useState<DictTypeVO[]>([]);
-  const [typeLoading, setTypeLoading] = useState(false);
-  const [selected, setSelected] = useState<DictTypeVO | null>(null);
-
+  // ===== 左栏（类型）状态 =====
+  const [active, setActive] = useState<DictTypeVO | null>(null);
   const [typeModalOpen, setTypeModalOpen] = useState(false);
   const [editingType, setEditingType] = useState<DictTypeVO | null>(null);
+  const [reloadSignal, setReloadSignal] = useState(0);
+
+  // ===== 右栏（数据）状态 =====
+  const [dataFilters, setDataFilters] = useState<DataFilterState>({
+    keyword: '',
+  });
+  const dataFilterRef = useRef<DataFilterState>({ keyword: '' });
   const [dataModalOpen, setDataModalOpen] = useState(false);
   const [editingData, setEditingData] = useState<DictDataVO | null>(null);
-
+  const [typeOptions, setTypeOptions] = useState<DictItemVO[]>([]);
   const actionRef = useRef<ActionType | undefined>(undefined);
-  /** 选中类型快照:FillTable request 闭包读取,切换时 reloadAndRest(对齐 filterRef 范式) */
-  const typeRef = useRef<DictTypeVO | null>(null);
 
-  // ===== 类型树全量加载(size=999【待确认】后端分页上限) =====
-  const loadTypes = async (selectId?: number) => {
-    setTypeLoading(true);
-    try {
-      const res = await pageDictType({ page: 1, size: 999 });
-      const list = res.records ?? [];
-      setTypes(list);
-      setSelected((prev) => {
-        if (selectId) return list.find((t) => t.id === selectId) ?? prev; // 新增后自动选中
-        // ★机构切换后旧类型可能不在新机构列表 → 回退首个类型(防停在空选态)
-        return prev
-          ? (list.find((t) => t.id === prev.id) ?? list[0] ?? null)
-          : (list[0] ?? null);
-      });
-    } catch (e) {
-      message.error((e as Error).message); // 500 原文 toast(含 miId 缺失等业务文案)
-    } finally {
-      setTypeLoading(false);
-    }
+  // 自管分页（ref = request 闭包唯一数据源；state = 分页条显示值）
+  const pageRef = useRef(1);
+  const pageSizeRef = useRef(20);
+  const [dataPage, setDataPage] = useState(1);
+  const [dataPageSize, setDataPageSize] = useState(20);
+  const [dataTotal, setDataTotal] = useState(0);
+
+  /** 分页唯一驱动入口：改 ref → 同步 state → reload()（不依赖 ProTable 内部分页） */
+  const gotoPage = (p: number, ps?: number) => {
+    pageRef.current = Math.max(1, p);
+    if (ps != null) pageSizeRef.current = ps;
+    setDataPage(pageRef.current);
+    setDataPageSize(pageSizeRef.current);
+    actionRef.current?.reload();
   };
 
-  /** miId 响应式:登录态写入(setOrgId)/顶栏切换机构后自动重载;
-   * 无机构上下文 → 清残留(树/选中/快照),阻断态接管;恢复后本 effect 自动重载 */
+  /** 右栏条件提交：条件写入 ref → 页码重置 1 → reload（规则10） */
+  const commitDataFilters = (next: DataFilterState) => {
+    dataFilterRef.current = next;
+    setDataFilters(next);
+    pageRef.current = 1;
+    setDataPage(1);
+    actionRef.current?.reload();
+  };
+
+  /** 左栏选中类型：同步重置右栏页码（先改 ref 再 setActive，key 重建后首查即第 1 页） */
+  const handleSelectType = (t: DictTypeVO | null) => {
+    pageRef.current = 1;
+    setDataPage(1);
+    setDataTotal(0);
+    setActive(t);
+  };
+
+  // 机构切换：清空选中 + 重置右栏分页
   useEffect(() => {
-    if (miId == null) {
-      setTypes([]);
-      setSelected(null);
-      typeRef.current = null;
-      return;
-    }
-    loadTypes();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    pageRef.current = 1;
+    pageSizeRef.current = 20;
+    setDataPage(1);
+    setDataPageSize(20);
+    setDataTotal(0);
+    setActive(null);
   }, [miId]);
 
-  // 切换类型 → 快照更新 + 表格回第 1 页重查
+  // 类型下拉数据源（DataModal 用）；miId 响应式重载
   useEffect(() => {
-    typeRef.current = selected;
-    actionRef.current?.reloadAndRest?.();
-  }, [selected?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (miId == null) {
+      setTypeOptions([]);
+      return;
+    }
+    getDictTypeOptions()
+      .then(setTypeOptions)
+      .catch((e) => message.error((e as Error).message));
+  }, [miId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ===== 类型操作 =====
-  const removeType = (row: DictTypeVO) => {
+  // ===== 右栏字典项操作 =====
+  /** 启停（口语化文案；4604 → toast 后自动刷新） */
+  const toggleData = (row: DictDataVO) => {
+    const next = isOn(row.status) ? 1 : 0;
     Modal.confirm({
-      title: `删除字典类型「${row.dictName}」?`,
+      title:
+        next === 1
+          ? `停用字典项「${row.dictLabel}」?`
+          : `启用字典项「${row.dictLabel}」?`,
       content:
-        '删除后不可恢复;若该类型下已存在字典项,后端将拒绝删除(需先清空字典项)。',
-      okText: '删除',
-      okButtonProps: { danger: true },
+        next === 1
+          ? '停用后，业务页的下拉选项和翻译将不再出现该值；已引用该值的历史数据仍按原值展示，不受影响。'
+          : '启用后，该值会重新出现在业务页的下拉选项和翻译中。',
+      okText: next === 1 ? '停用' : '启用',
+      okButtonProps: next === 1 ? { danger: true } : undefined,
       onOk: async () => {
         try {
-          await deleteDictType(row.id);
-          message.success('删除成功');
-          if (selected?.id === row.id) setSelected(null);
-          loadTypes();
+          const res = await setDictDataStatus(row.id, next as 0 | 1);
+          message.success(res?.message ?? (next === 1 ? '已停用' : '已启用'));
+          invalidate(row.dictCode);
+          actionRef.current?.reload(); // 保持页码，不整页刷新
         } catch (e) {
           message.error((e as Error).message);
-          throw e; // 保持确认框开启(对齐工程约定)
+          if (getBizCode(e) === DICT_ERR.DATA_NOT_EXIST) {
+            actionRef.current?.reload(); // 4604：通常并发已删 → 刷新列表；自动关确认框
+            return;
+          }
+          throw e;
         }
       },
     });
   };
 
-  // ===== 字典项删除(物理删除;onConfirm 内闭包拿最新选中类型) =====
-  const removeData = async (row: DictDataVO) => {
-    const t = typeRef.current;
-    try {
-      await deleteDictData(row.id);
-      message.success('删除成功');
-      if (t) invalidate(t.dictCode); // 失效业务侧下拉缓存
-      actionRef.current?.reload();
-    } catch (e) {
-      message.error((e as Error).message);
-    }
+  /** 删除（契约要求确认文案必须含指定原文，不改；4604 → toast 后自动刷新） */
+  const removeData = (row: DictDataVO) => {
+    Modal.confirm({
+      title: `删除字典项「${row.dictLabel}」?`,
+      content:
+        "删除后不可恢复;物理删除，已引用该值的历史数据将显示为'-'，建议改用停用。",
+      okText: '删除',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          const res = await deleteDictData(row.id);
+          message.success(res?.message ?? '删除成功');
+          invalidate(row.dictCode);
+          actionRef.current?.reload();
+        } catch (e) {
+          message.error((e as Error).message);
+          if (getBizCode(e) === DICT_ERR.DATA_NOT_EXIST) {
+            actionRef.current?.reload();
+            return;
+          }
+          throw e;
+        }
+      },
+    });
   };
 
-  /** 启停字典项:'0' 启用 ↔ '1' 停用;成功后失效下拉缓存并刷新当前页 */
-  const toggleData = async (row: DictDataVO) => {
-    const t = typeRef.current;
-    const next = isOn(row.status) ? 1 : 0;
-    try {
-      await setDictDataStatus(row.id, next as 0 | 1);
-      message.success(next === 1 ? '已停用' : '已启用');
-      if (t) invalidate(t.dictCode);
-      actionRef.current?.reload();
-    } catch (e) {
-      message.error((e as Error).message);
-    }
-  };
-
-  // ===== 列定义(对齐真实系统 4 列;数组显式泛型,render 拿到上下文类型) =====
-  const columns: ProColumns<DictDataVO>[] = [
+  // ===== 右栏列定义（★名称列加粗；百分比列宽合计 100%，无横向滚动） =====
+  const dataColumns: ProColumns<DictDataVO>[] = [
     {
-      title: '值域代码',
-      dataIndex: 'dictValue',
-      width: 180,
-      align: 'center',
-      render: (_, r) => r.dictValue ?? '-',
-    },
-    {
-      title: '值域名称',
+      title: '名称',
       dataIndex: 'dictLabel',
-      align: 'center',
+      width: '24%',
+      ellipsis: true,
+      // ★名称列加粗醒目：600 字重 + 主文本色；停用 Tag 随行展示
       render: (_, r) => (
-        <Space>
-          {r.dictLabel ?? '-'}
-          {!isOn(r.status) && <Tag>停用</Tag>}
+        <Space size={4}>
+          <span
+            style={{
+              fontWeight: 600,
+              color: 'rgba(0,0,0,0.88)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {r.dictLabel ?? '-'}
+          </span>
+          {!isOn(r.status) && <Tag style={{ marginInlineEnd: 0 }}>停用</Tag>}
         </Space>
       ),
     },
     {
-      title: '创建时间',
-      dataIndex: 'createTime',
-      width: 190,
+      title: '键值',
+      dataIndex: 'dictValue',
+      width: '9%',
       align: 'center',
-      render: (_, r) => fmtFull(r.createTime), // 带 T / 不带 T 双形态兼容
+      render: (_, r) => r.dictValue ?? '-', // 编码语义，字符串原样，禁止 Number 化
+    },
+    {
+      title: '排序',
+      dataIndex: 'dictSort',
+      width: '7%',
+      align: 'center',
+      render: (_, r) => r.dictSort ?? '-',
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: '9%',
+      align: 'center',
+      render: (_, r) => (
+        <Switch
+          size="small"
+          checked={isOn(r.status)}
+          onChange={() => toggleData(r)}
+        />
+      ),
+    },
+    {
+      title: '标准',
+      dataIndex: 'platform',
+      width: '8%',
+      align: 'center',
+      render: (_, r) => renderPlatform(r.platform),
+    },
+    {
+      title: '备注',
+      dataIndex: 'remark',
+      width: '15%',
+      ellipsis: true,
+      render: (_, r) => r.remark || '-',
+    },
+    {
+      title: '更新时间',
+      dataIndex: 'updateTime',
+      width: '16%',
+      align: 'center',
+      ellipsis: true,
+      render: (_, r) => fmtFull(r.updateTime),
     },
     {
       title: '操作',
       valueType: 'option',
-      width: 110,
+      width: '12%',
       align: 'center',
-      // ⚠️ 第一参是 dom 节点,必须占位 _(历史坑)
+      // ⚠️ 第一参是 dom 节点，必须占位 _（历史坑）
+      // ★平台限制放开：不再按 platform 禁用（权限走页面级授权）
       render: (_, r) => (
         <Space size={0}>
           <Tooltip title="编辑">
@@ -209,46 +308,22 @@ export default function DictManage() {
               }}
             />
           </Tooltip>
-          <Tooltip title={isOn(r.status) ? '停用' : '启用'}>
+          <Tooltip title="删除">
             <Button
               type="text"
               size="small"
+              danger
               style={{ padding: '0 4px' }}
-              icon={
-                isOn(r.status) ? (
-                  <StopOutlined style={{ color: '#8c8c8c', fontSize: 14 }} />
-                ) : (
-                  <CheckCircleOutlined
-                    style={{ color: '#52c41a', fontSize: 14 }}
-                  />
-                )
-              }
-              onClick={() => toggleData(r)}
+              icon={<DeleteOutlined style={{ fontSize: 14 }} />}
+              onClick={() => removeData(r)}
             />
           </Tooltip>
-          <Popconfirm
-            title="确定删除该字典项?"
-            description="物理删除且不可恢复;若已被历史数据引用,请改为「停用」。"
-            okText="删除"
-            okButtonProps={{ danger: true }}
-            onConfirm={() => removeData(r)}
-          >
-            <Tooltip title="删除">
-              <Button
-                type="text"
-                size="small"
-                danger
-                style={{ padding: '0 4px' }}
-                icon={<DeleteOutlined style={{ fontSize: 14 }} />}
-              />
-            </Tooltip>
-          </Popconfirm>
         </Space>
       ),
     },
   ];
 
-  // ===== miId 阻断态(响应式:选机构后 useOrgId 事件自动恢复,无需手动刷新/重试) =====
+  // ===== miId 阻断态 =====
   if (miId == null) {
     return (
       <PageFill>
@@ -256,7 +331,7 @@ export default function DictManage() {
           type="warning"
           showIcon
           message="未选择机构,字典数据不可用"
-          description="字典为机构级数据(后端强校验 miId)。请通过顶栏「切换机构」选择机构,选择后本页自动恢复(无需手动刷新);若顶栏无机构切换入口,说明当前账号未携带可用机构列表,请联系管理员分配机构后重新登录。"
+          description="字典为机构级数据(管理分页接口 miId 必填)。请通过顶栏「切换机构」选择机构,选择后本页自动恢复(无需手动刷新);若顶栏无机构切换入口,说明当前账号未携带可用机构列表,请联系管理员分配机构后重新登录。"
         />
       </PageFill>
     );
@@ -264,109 +339,274 @@ export default function DictManage() {
 
   return (
     <PageFill>
-      <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
-        {/* ===== 左:字典类型树(白卡,样式 token 对齐药品库存筛选栏) ===== */}
-        <TypeTree
-          types={types}
-          loading={typeLoading}
-          selected={selected}
-          onSelect={setSelected}
-          onAdd={() => {
-            setEditingType(null);
-            setTypeModalOpen(true);
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          background: '#fff',
+          borderRadius: 8,
+          padding: '12px 16px',
+          display: 'flex',
+          gap: 12,
+          overflow: 'hidden',
+        }}
+      >
+        {/* ===== 左栏：字典类型（树型分组） ===== */}
+        <div
+          style={{
+            width: 300,
+            flexShrink: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            borderRight: '1px solid #f0f0f0',
+            paddingRight: 12,
           }}
-          onEdit={(t) => {
-            setEditingType(t);
-            setTypeModalOpen(true);
-          }}
-          onDelete={removeType}
-        />
+        >
+          <TypeList
+            active={active}
+            onSelect={handleSelectType}
+            onAdd={() => {
+              setEditingType(null);
+              setTypeModalOpen(true);
+            }}
+            onEdit={(t) => {
+              setEditingType(t);
+              setTypeModalOpen(true);
+            }}
+            reloadSignal={reloadSignal}
+          />
+        </div>
 
-        {/* ===== 右:字典项表格(白卡占满剩余高度,表体内部滚动) ===== */}
+        {/* ===== 右栏：选中类型的字典项明细 ===== */}
         <div
           style={{
             flex: 1,
             minWidth: 0,
-            background: '#fff',
-            borderRadius: 8,
-            padding: '12px 16px 4px',
             display: 'flex',
             flexDirection: 'column',
+            minHeight: 0,
           }}
         >
-          <div style={{ marginBottom: 12, flexShrink: 0 }}>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              disabled={!selected}
-              onClick={() => {
-                setEditingData(null);
-                setDataModalOpen(true);
+          {active ? (
+            <>
+              {/* 第一段：筛选行 */}
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  marginBottom: 8,
+                  flexShrink: 0,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Input
+                  allowClear
+                  prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+                  placeholder="名称/拼音"
+                  style={{ width: 200 }}
+                  value={dataFilters.keyword}
+                  onChange={(e) =>
+                    setDataFilters((p) => ({ ...p, keyword: e.target.value }))
+                  }
+                  onPressEnter={() => commitDataFilters(dataFilters)} // keyword 命中 dictLabel/pinyin
+                />
+                <Select
+                  allowClear
+                  placeholder="状态"
+                  style={{ width: 110 }}
+                  value={dataFilters.status}
+                  options={STATUS_META}
+                  onChange={(v) =>
+                    commitDataFilters({ ...dataFilters, status: v })
+                  }
+                />
+                <Button
+                  type="primary"
+                  onClick={() => commitDataFilters(dataFilters)}
+                >
+                  查询
+                </Button>
+                <Button onClick={() => commitDataFilters({ keyword: '' })}>
+                  重置
+                </Button>
+              </div>
+
+              {/* 第二段：工具条行（★新增不再按平台类型禁用） */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginBottom: 8,
+                  flexShrink: 0,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span style={{ fontWeight: 600 }}>字典项</span>
+                <span style={{ color: 'rgba(0,0,0,0.45)', fontSize: 12 }}>
+                  {active.dictName}（{active.dictCode}）
+                </span>
+                {active.platform && <Tag color="gold">标准</Tag>}
+                {!isOn(active.status) && <Tag>停用</Tag>}
+                <span style={{ flex: 1 }} />
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setEditingData(null);
+                    setDataModalOpen(true);
+                  }}
+                >
+                  新增
+                </Button>
+                <Button
+                  type="text"
+                  icon={<ReloadOutlined />}
+                  title="刷新"
+                  onClick={() => actionRef.current?.reload()}
+                />
+              </div>
+
+              {/* ★表格视口：自己接管纵向滚动（overflowY auto），表头吸顶/内部限高由
+                  VIEWPORT_CSS 处理；不依赖 FillTable 的 scroll 行为 */}
+              <div
+                className="dict-data-viewport"
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  border: '1px solid #f0f0f0',
+                  borderRadius: 8,
+                  overflowY: 'auto',
+                  overflowX: 'hidden',
+                }}
+              >
+                <style>{VIEWPORT_CSS}</style>
+                <FillTable
+                  pro
+                  key={`${miId}|${active.id}`}
+                  reservedHeight={0}
+                  // ⚠️ FillTable 无泛型，回调参数显式注解（TS7006）
+                  rowKey={(r: DictDataVO) => String(r.id)}
+                  actionRef={actionRef}
+                  columns={dataColumns}
+                  tableLayout="fixed"
+                  // 不传 scroll（y 曾被 FillTable 覆盖致失效；滚动由视口层接管）
+                  search={false}
+                  options={false}
+                  cardBordered={false}
+                  pagination={false} // 内置分页关闭，分页由底部通栏条承担（自管状态驱动）
+                  locale={{
+                    emptyText: (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description="暂无字典项"
+                      >
+                        <Button
+                          type="primary"
+                          icon={<PlusOutlined />}
+                          onClick={() => {
+                            setEditingData(null);
+                            setDataModalOpen(true);
+                          }}
+                        >
+                          新增字典项
+                        </Button>
+                      </Empty>
+                    ),
+                  }}
+                  // request 不读 params（ProTable 内部分页不可靠），页码唯一来源 = 自管 ref
+                  request={async () => {
+                    const f = dataFilterRef.current;
+                    const current = pageRef.current;
+                    const size = pageSizeRef.current;
+                    try {
+                      const res = await pageDictData({
+                        dictCode: active.dictCode, // 左侧选中类型锁定过滤
+                        status: f.status,
+                        keyword: f.keyword,
+                        page: current,
+                        size,
+                      }); // miId 由服务层统一注入（租户铁律）
+                      setDataTotal(res.total);
+                      // 末页删空回退：一次性重查（无循环）
+                      const lastPage = Math.max(1, Math.ceil(res.total / size));
+                      if (res.records.length === 0 && current > lastPage) {
+                        pageRef.current = lastPage;
+                        setDataPage(lastPage);
+                        actionRef.current?.reload();
+                        return { data: [], total: res.total, success: true };
+                      }
+                      return {
+                        data: res.records,
+                        total: res.total,
+                        success: true,
+                      };
+                    } catch (e) {
+                      message.error((e as Error).message);
+                      setDataTotal(0);
+                      return { data: [], total: 0, success: false };
+                    }
+                  }}
+                />
+              </div>
+
+              {/* 通栏分页条：钉在右栏底边，宽度=右栏 100% */}
+              <div
+                style={{
+                  flexShrink: 0,
+                  marginTop: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span style={{ color: 'rgba(0,0,0,0.45)' }}>
+                  共 {dataTotal} 条
+                </span>
+                <Pagination
+                  size="small"
+                  current={dataPage}
+                  pageSize={dataPageSize}
+                  total={dataTotal}
+                  showSizeChanger
+                  showQuickJumper
+                  pageSizeOptions={[10, 20, 50]}
+                  onChange={(p, ps) => gotoPage(p, ps)}
+                />
+              </div>
+            </>
+          ) : (
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
             >
-              新增
-            </Button>
-            {selected && (
-              <span style={{ marginLeft: 12, color: '#8c8c8c' }}>
-                {selected.dictName}({selected.dictCode})
-              </span>
-            )}
-          </div>
-
-          <FillTable
-            pro
-            reservedHeight={160} // 底部被裁/留白过大时微调此值
-            headerTitle="字典项"
-            // ⚠️ FillTable 无泛型,回调参数显式注解(TS7006)
-            rowKey={(r: DictDataVO) => String(r.id)}
-            actionRef={actionRef}
-            columns={columns}
-            search={false}
-            options={{ reload: true, density: false, setting: false }}
-            cardBordered={false}
-            request={async (params: {
-              current?: number;
-              pageSize?: number;
-            }) => {
-              const t = typeRef.current;
-              if (!t) return { data: [], total: 0, success: true };
-              try {
-                const res = await pageDictData({
-                  dictCode: t.dictCode,
-                  page: params.current ?? 1,
-                  size: params.pageSize ?? 10,
-                });
-                return { data: res.records, total: res.total, success: true };
-              } catch (e) {
-                message.error((e as Error).message); // 500 → toast 原文;401 由拦截器跳登录
-                return { data: [], total: 0, success: false };
-              }
-            }}
-            pagination={{
-              defaultPageSize: 10,
-              showSizeChanger: true,
-              showQuickJumper: true,
-              showTotal: (t: number) => `共 ${t} 条`,
-            }}
-          />
+              <Empty description="请先在左侧选择字典类型" />
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ===== 弹窗 ===== */}
+      {/* ===== 弹窗（单例） ===== */}
       <TypeModal
         open={typeModalOpen}
         editing={editingType}
         onClose={() => setTypeModalOpen(false)}
-        onSaved={(newId) => {
+        onSaved={() => {
           setTypeModalOpen(false);
-          loadTypes(newId);
+          setReloadSignal((s) => s + 1);
         }}
       />
       <DataModal
         open={dataModalOpen}
         editing={editingData}
-        dictCode={selected?.dictCode ?? ''}
-        dictTypeName={selected?.dictName}
+        dictCode={active?.dictCode}
+        lockDictCode
+        typeOptions={typeOptions}
         onClose={() => setDataModalOpen(false)}
         onSaved={() => {
           setDataModalOpen(false);

@@ -247,3 +247,59 @@ export function copyPermission(data: {
 }): Promise<CopyPermissionResult> {
   return bizRequest('/api/user/copy-permission', { method: 'POST', data });
 }
+
+// ===== 批量操作(2026-11-18 后端已落地;契约:PUT /user/batch-status | POST /user/batch-delete | PUT /user/batch-{roles,depts})=====
+
+/** 批量操作统一结果(部分成功模式;skipped 口径对齐 CopyPermissionResult) */
+export interface BatchOpResult {
+  successUserIds: number[];
+  skipped: { userId: number; name: string | null; reason: string }[];
+  warnings?: string[];
+}
+
+/** 批量锁定/解锁:status 1解锁(恢复正常) 2锁定;幂等(已是目标状态计入成功);防自锁后端 skipped */
+export function batchSetUserStatus(data: {
+  userIds: number[];
+  status: 1 | 2;
+}): Promise<BatchOpResult> {
+  return bizRequest<BatchOpResult>('/api/user/batch-status', {
+    method: 'PUT',
+    data,
+  });
+}
+
+/** 批量删除(软删):联动清角色/部门/组成员绑定并踢会话;含登录人 → 该条 skipped */
+export function batchDeleteUsers(data: {
+  userIds: number[];
+}): Promise<BatchOpResult> {
+  return bizRequest<BatchOpResult>('/api/user/batch-delete', {
+    method: 'POST',
+    data,
+  });
+}
+
+/** 批量分配角色:mode overwrite=每人全量覆盖为 roleIds([]=批量清空) / append=现有∪roleIds(默认标记保留) */
+export function batchAssignUserRoles(data: {
+  userIds: number[];
+  roleIds: number[];
+  mode: 'overwrite' | 'append';
+  defaultRoleId?: number;
+}): Promise<BatchOpResult> {
+  return bizRequest<BatchOpResult>('/api/user/batch-roles', {
+    method: 'PUT',
+    data,
+  });
+}
+
+/** 批量分配部门:mode 同 batch-roles;跨机构目标 skipped(绑定保持不变) */
+export function batchAssignUserDepts(data: {
+  userIds: number[];
+  deptIds: number[];
+  mode: 'overwrite' | 'append';
+  defaultDeptId?: number;
+}): Promise<BatchOpResult> {
+  return bizRequest<BatchOpResult>('/api/user/batch-depts', {
+    method: 'PUT',
+    data,
+  });
+}

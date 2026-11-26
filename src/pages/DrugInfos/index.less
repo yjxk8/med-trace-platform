@@ -1,0 +1,109 @@
+// 药品字典页面局部样式(非模块化引入,类名统一 drug- 前缀防冲突)
+// ★本轮:1:1 移植用户管理 .user-table-fill 已验证契约(该页实测满屏):
+// 结构锚点 = FillTable 根节点 absolute 钉满 + 表体 min-height 钉底(--ubody-h)
+.drug-table-fill {
+  // FillTable 根:钉满(双保险;真正高度契约由内联 flex 链 + scroll.y 保证)
+  > .fill-table,
+  > :first-child {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  // ProTable 外壳内距清零(antd Card 与 ProCard 两套命名都覆盖)
+  .ant-card-body,
+  .ant-pro-card-body {
+    padding: 0 !important;
+  }
+
+  // 残渲染的空工具条/警示条:不占位
+  .ant-pro-table-list-toolbar,
+  .ant-pro-table-alert {
+    display: none !important;
+  }
+
+  // ★表体 min-height 钉底:antd 内联 max-height = scroll.y,
+  // 此处补 min-height = 同值 → 表体高度恒定,行数不足时分页仍贴容器底
+  .ant-table-body {
+    min-height: var(--ubody-h, 360px);
+  }
+
+  // 表头密度(表头定高,参与 TABLE_CHROME=96 常数:12+12+22≈46)
+  .ant-table-thead > tr > th {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  // 行密度紧凑(20 行/页)
+  .ant-table-tbody > tr > td {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  // 单击行勾选/双击行编辑的可用性提示
+  .ant-table-tbody > tr {
+    cursor: pointer;
+  }
+
+  // 分页:紧贴表体(表体已定高,剩余空间≈0,天然钉底)
+  .ant-table-pagination.ant-pagination {
+    flex-shrink: 0;
+    margin: 12px 0 4px;
+  }
+
+  // 多选列紧凑化(配合 rowSelection.columnWidth=32)
+  .ant-table-selection-column {
+    padding-inline: 6px;
+  }
+}
+
+// ===== 列表工具条(「药品列表」标题 + 操作图标组,对齐用户管理 .user-toolbar 外观)=====
+.drug-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  background: #f5f7fa;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.drug-toolbar__title {
+  font-weight: 600;
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.88);
+  margin-right: 6px;
+  white-space: nowrap;
+}
+.drug-toolbar__divider {
+  width: 1px;
+  height: 16px;
+  background: #dcdfe6;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+.drug-toolbar .ant-btn-text {
+  padding-inline: 6px;
+}
+.drug-toolbar__selchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  margin-left: 4px;
+  background: #e6f4ff;
+  color: #1677ff;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  a {
+    color: #1677ff;
+  }
+}

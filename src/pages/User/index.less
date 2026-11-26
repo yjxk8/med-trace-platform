@@ -1,83 +1,67 @@
-// 用户管理页面局部样式（非模块化引入，类名统一 user- 前缀防冲突）
-// 结构对齐角色管理页（role-table-fill 同构，仅前缀不同）：
-// 筛选区(fixed) → Tag行(fixed) → .user-table-fill(flex:1)
-// → pro-card(flex:1) → card-body(flex:1) → table-wrapper(flex:1)
-// → .ant-table(flex:1, 内部滚动+表头sticky) → .ant-pagination(fixed, 钉底)
+// 用户管理页面局部样式(非模块化引入,类名统一 user- 前缀防冲突)
+// ★2026-11-19 v5:布局几何全部改由 tsx 内联样式 + scroll.y 内联保证(与 DOM/加载时序无关),
+// 本文件只负责:外观细节(工具条/chip)、行密度、表体 min-height 钉底(--ubody-h)。
 .user-table-fill {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-
-  // ProTable 卡片：纵向 flex 占满
-  .ant-pro-card {
-    flex: 1;
-    min-height: 0;
+  // FillTable 根:钉满(双保险;真正高度契约由内联 flex 链 + scroll.y 保证)
+  > .fill-table,
+  > :first-child {
+    position: absolute;
+    inset: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
+  // ProTable 外壳内距清零(antd Card 与 ProCard 两套命名都覆盖)
+  .ant-card-body,
   .ant-pro-card-body {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    padding-bottom: 0;
+    padding: 0 !important;
   }
 
-  // 表格容器：占据分页以外的全部空间
-  .ant-table-wrapper {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
+  // 残渲染的空工具条/警示条:不占位
+  .ant-pro-table-list-toolbar,
+  .ant-pro-table-alert {
+    display: none !important;
   }
 
-  // 表格本体：溢出在内部滚动（不出页面级/卡片级滚动条）
-  .ant-table {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
+  // ★表体 min-height 钉底:antd 内联 max-height = scroll.y,
+  //   此处补 min-height = 同值 → 表体高度恒定,行数不足时分页仍贴容器底
+  .ant-table-body {
+    min-height: var(--ubody-h, 360px);
   }
 
-  // 表头吸附（滚动容器内 sticky）
+  // 表头密度(表头定高,参与 TABLE_CHROME=96 常数:12+12+22≈46)
   .ant-table-thead > tr > th {
-    position: sticky;
-    top: 0;
-    z-index: 2;
+    padding-top: 12px;
+    padding-bottom: 12px;
   }
 
-  // 分页：钉死底部，不随内容浮动（末页只有 1 行时也贴底）
+  // 行密度紧凑(20 行/页)
+  .ant-table-tbody > tr > td {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  // 单击行勾选/双击行编辑的可用性提示
+  .ant-table-tbody > tr {
+    cursor: pointer;
+  }
+
+  // 分页:紧贴表体(表体已定高,剩余空间≈0,天然钉底)
   .ant-table-pagination.ant-pagination {
     flex-shrink: 0;
     margin: 12px 0 4px;
   }
+
+  // 多选列紧凑化(配合 rowSelection.columnWidth=32)
+  .ant-table-selection-column {
+    padding-inline: 6px;
+  }
 }
 
-// ===== 列表页：已选条件 Tag 行 =====
-.user-filter-tags {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  margin: -4px 0 10px;
-  flex-shrink: 0; // 不被压缩
-}
-
-.user-filter-tags__label {
-  color: #8c8c8c;
-  font-size: 12px;
-  margin-right: 6px;
-}
-
-.user-filter-tags__item {
-  margin-inline-end: 4px;
-}
-
-// ===== 分配角色弹窗（对齐 AssignMenuModal 的提示/分区样式口径）=====
+// ===== 分配角色弹窗(对齐 AssignMenuModal 的提示/分区样式口径)=====
 .user-assign-tip {
   color: #8c8c8c;
   font-size: 12px;
@@ -94,7 +78,7 @@
   margin-bottom: 4px;
 }
 
-// ===== 分配角色弹窗：左右双栏（对齐 Role 页 role-assign-* 口径，前缀 user- 防冲突）=====
+// ===== 分配角色弹窗:左右双栏(对齐 Role 页 role-assign-* 口径,前缀 user- 防冲突)=====
 .user-assign-body {
   display: flex;
   gap: 12px;
@@ -144,7 +128,7 @@
   padding-top: 8px;
 }
 
-// 分组（按角色类型 / 历史授权）
+// 分组(按角色类型 / 历史授权)
 .user-assign-group {
   margin-bottom: 10px;
 }
@@ -182,7 +166,7 @@
   cursor: pointer;
 }
 
-// 树节点（图标 + 名称 + code 副标签 + 范围标识）
+// 树节点(图标 + 名称 + code 副标签 + 范围标识)
 .user-role-node {
   display: inline-flex;
   align-items: center;
@@ -219,10 +203,7 @@
   flex-shrink: 0;
 }
 
-
-
-
-// 窄屏兜底：弹窗不足 880 时右面板换行到下方
+// 窄屏兜底:弹窗不足 880 时右面板换行到下方
 @media (max-width: 920px) {
   .user-assign-body {
     flex-direction: column;
@@ -236,7 +217,8 @@
     padding-top: 8px;
   }
 }
-// ===== 分配角色弹窗：左树工具条 + 树容器（自有类，不依赖 Role 页 less 加载时机）=====
+
+// ===== 分配角色弹窗:左树工具条 + 树容器(自有类,不依赖 Role 页 less 加载时机)=====
 .user-tree-toolbar {
   display: flex;
   gap: 8px;
@@ -255,4 +237,58 @@
   min-height: 200px;
   max-height: 380px;
   overflow: auto;
+}
+
+// ===== 列表工具条(「用户列表」标题 + ＋新增 + 操作图标组,独立于筛选区)=====
+.user-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  background: #f5f7fa;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.user-toolbar__title {
+  font-weight: 600;
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.88);
+  margin-right: 6px;
+  white-space: nowrap;
+}
+
+// 已选计数 chip(操作图标末尾,选中即出现)
+.user-toolbar__selchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  margin-left: 4px;
+  background: #e6f4ff;
+  color: #1677ff;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+
+  a {
+    color: #1677ff;
+  }
+}
+
+.user-toolbar__divider {
+  width: 1px;
+  height: 16px;
+  background: #dcdfe6;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+// 图标按钮紧凑化(无边框、小内距)
+.user-toolbar .ant-btn-text {
+  padding-inline: 6px;
 }

@@ -3,14 +3,12 @@
  * 契约:v3 §四字段字典(新 key:name/account/type/tenantType/sex/...)
  * - 编辑可改全部资料字段;锁定 6 项不进表单不进 payload:account/pwd/miId/status/loginStatus/delFlag
  * - ★pyCode 契约更新(2026-11-17,后端 UserListVO 已补 pyCode 并部署,page/detail 响应均含):
- *   ① 回显:编辑时回显库中已有拼音码(废除旧契约「不回显」——旧实现 pyCode:'' 显式清空,
- *      导致编辑弹窗拼音码空白,即本修复根因);
- *   ② 提交三态(★后端语义,勿改链路):有值 → 原样回传(保护手工自定义);空串 → undefined
- *      → cleanPayload 剔除 → 请求体不含 pyCode → 后端按 name 自动重算(空/null/不含三态同义);
- *   ③ 联动(产品定版):姓名输入 change → 清空 pyCode 框——留空保存 = 跟随新姓名重算,
- *      用户可随即手填覆盖;setFieldsValue 不触发 onChange,初始化/回显不会被误清
+ *   ① 回显:编辑时回显库中已有拼音码;② 提交三态:有值原样回传/空串→undefined→cleanPayload
+ *   剔除→后端按 name 自动重算;③ 联动:姓名输入 change → 清空 pyCode 框
  * - ★新增落当前机构(getMiId();无机构不提交——submit 内守卫;编辑锁定 miId 不进 payload)
- * - ⚠️【遗留#2】education/post/level/skill/workNature 存字典 code,DictSelect 待字典类型编码确认后替换
+ * - ★★遗留#2 已落地(本轮):education/post/level 接字典下拉(DictSelect,PT0.2.15/PT0.2.1/PT0.2.16,
+ *   平台标准);提交值=字典 value(业务表只存 value 硬性契约);历史自由文本存量值 Select 无匹配
+ *   时原样回显,可保留或改选;workNature/skill 待字典类型建立,保持手输
  * - ⚠️ PUT「null 不更新」:编辑时清空的选填字段不会保存为空(后端限制,底部有提示)
  */
 import {
@@ -26,6 +24,7 @@ import {
 } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useEffect, useState } from 'react';
+import DictSelect from '@/components/DictSelect';
 import DraggableModal from '@/components/DraggableModal';
 import {
   createUser,
@@ -37,6 +36,7 @@ import {
   updateUser,
 } from '@/services/org/user';
 import { getMiId } from '@/services/tenant';
+import { USER_DICT } from './dictCodes';
 import {
   renderLoginStatus,
   renderStatus,
@@ -53,10 +53,8 @@ interface Props {
   onClose: () => void;
   onSaved: () => void;
 }
-
 const itemMb = { marginBottom: 8 } as const;
 const C4 = { span: 6 } as const; // 一行 4 列
-
 const Section = ({ title }: { title: string }) => (
   <Divider
     orientation="start"
@@ -77,14 +75,12 @@ export default function UserFormModal({
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const isEdit = !!editing && editing.id != null;
-
   useEffect(() => {
     if (!open) return;
-    form.resetFields(); // ★时序红线:所有重置动作先行,pyCode 赋值必须在重置之后(任务第4点)
+    form.resetFields(); // ★时序红线:所有重置动作先行,pyCode 赋值必须在重置之后
     if (isEdit && editing) {
       form.setFieldsValue({
-        ...editing, // 新 key 同名控件自动回显;status 等无控件键被忽略
-        // String 归一化全部带空值守卫——杜绝字面量 "undefined" 进 Select
+        ...editing,
         type: editing.type != null ? String(editing.type) : undefined,
         tenantType:
           editing.tenantType != null
@@ -102,28 +98,23 @@ export default function UserFormModal({
         authEndTime: editing.authEndTime
           ? dayjs(editing.authEndTime)
           : undefined,
-        // ★pyCode 新契约(2026-11-17):回显库中已有值(detail/page 响应均含);
-        //   null/undefined 归一为 ''(Input 空显示);不再强制清空——旧实现 pyCode:'' 即本 bug 根因。
-        //   列表页 openEdit 先上行数据、detail 返回后 setEditing 二次触发本 effect,
-        //   以 detail 为准覆盖——pyCode 随之覆盖,天然满足「赋值在所有重置之后」
+        // ★pyCode:回显库中已有值;null/undefined 归一为 '';列表页 openEdit 先上行数据、
+        // detail 返回后 setEditing 二次触发本 effect,以 detail 为准覆盖
         pyCode: editing.pyCode ?? '',
       });
     } else {
       form.setFieldsValue({
         type: USER_TYPE.ORG_USER,
         tenantType: USER_TENANT_TYPE.HOSPITAL,
-        // 新增:pyCode 留空(resetFields 已清)→ 保存后后端按 name 自动生成;可手填
       });
     }
   }, [open, editing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toStr = (v: Dayjs | null | undefined, f: string) =>
     v ? v.format(f) : undefined;
-
   const submit = async () => {
     const v = await form.validateFields();
-    // ★机构守卫(仅新增):未选机构(平台级)不提交——宁可不建,也不能落 miId=null 的
-    // 「任何机构都看不见/管不着」的脏用户;按钮侧另有 disabled 双保险(列表页)
+    // ★机构守卫(仅新增):未选机构(平台级)不提交——不能落 miId=null 的脏用户
     const curMiId = getMiId();
     if (!isEdit && curMiId == null) {
       message.error('未选择机构,请先选择机构后再创建用户');
@@ -134,49 +125,43 @@ export default function UserFormModal({
       // 资料字段(新增/编辑同构);空串在 services 层 cleanPayload 统一剔除(v3 §五)
       const profile = {
         name: v.name,
-        // ★pyCode 提交三态(2026-11-17 新契约,链路勿改):
-        //   有值('zfm')→ 原样回传(保护手工自定义,不被重算覆盖);
-        //   空串('')→ `|| undefined` → cleanPayload 剔除 → 请求体不含 pyCode
-        //   → 后端按 name 自动重算。⚠️ 这正是「清空 = 想让拼音码跟随新姓名重算」的产品语义;
-        //   若此处改成 keepEmpty 直传空串反而多余(空串/undefined/不含,后端三态同义)
+        // ★pyCode 提交三态(链路勿改):有值原样回传;空串 → undefined → 剔除 → 后端按 name 重算
         pyCode: v.pyCode || undefined,
         phone: v.phone,
         type: v.type,
         tenantType: v.tenantType,
         sex: v.sex,
         idCard: v.idCard,
-        education: v.education, // 字典 code【遗留#2:DictSelect 待换】
+        education: v.education, // ★遗留#2 已落地:字典 value(PT0.2.15);清空 → 剔除 → 后端置空
         entryDate: toStr(v.entryDate, FMT_DATE),
         tel: v.tel,
         email: v.email,
-        post: v.post, // 字典 code【遗留#2】
+        post: v.post, // ★遗留#2 已落地:字典 value(PT0.2.1)
         position: v.position,
-        level: v.level, // 字典 code【遗留#2】
-        skill: v.skill, // 疑似字典 code【遗留#2】
-        workNature: v.workNature, // 字典 code【遗留#2】
+        level: v.level, // ★遗留#2 已落地:字典 value(PT0.2.16)
+        skill: v.skill, // 【待建】工作性质/擅长领域字典类型未建立,暂自由文本
+        workNature: v.workNature, // 【待建】同上
         isTrainee: v.isTrainee,
         certNo: v.certNo,
         authStartTime: toStr(v.authStartTime, FMT_DATETIME),
         authEndTime: toStr(v.authEndTime, FMT_DATETIME),
         prescClass: v.prescClass,
       };
-
       if (isEdit && editing) {
         const res = await updateUser({ id: editing.id, ...profile });
         message.success(res?.message || '修改成功');
       } else {
         const res = await createUser({
-          account: v.account, // 不 trim:区分大小写(Admin ≠ admin,services 层豁免)
+          account: v.account, // 不 trim:区分大小写(services 层豁免)
           pwd: v.pwd || undefined, // 留空 → 后端默认 123456
-          miId: curMiId ?? undefined, // ★登录所选机构(守卫已保证非-null;编辑为锁定项不进此分支)
+          miId: curMiId ?? undefined,
           ...profile,
         });
-        message.success(res?.message || '创建成功'); // 后端原文「创建成功,默认密码 123456」透传
+        message.success(res?.message || '创建成功');
       }
       onSaved();
     } catch (e) {
-      // 后端原文透传;onSaved 未执行 → 弹窗保持开启,用户可改后重提
-      message.error((e as Error).message);
+      message.error((e as Error).message); // 后端原文透传;弹窗保持开启
     } finally {
       setSaving(false);
     }
@@ -192,7 +177,6 @@ export default function UserFormModal({
       destroyOnClose
       width={1080}
       centered
-      // 小屏保险丝:正常屏总高约 690px 不会触发;极端矮屏才内部滚动
       styles={{
         body: {
           maxHeight: 'calc(100vh - 210px)',
@@ -224,8 +208,7 @@ export default function UserFormModal({
               rules={[{ required: true, message: '请输入姓名' }]}
               style={itemMb}
             >
-              {/* ★联动(产品定版):姓名变更 → 清空 pyCode——留空保存 = 后端按新姓名重算;
-                  用户可随即手填覆盖。setFieldsValue 不触发 onChange,回显赋值不会被误清 */}
+              {/* ★联动:姓名变更 → 清空 pyCode——留空保存 = 后端按新姓名重算;setFieldsValue 不触发 onChange */}
               <Input
                 placeholder="如 张三"
                 maxLength={48}
@@ -260,7 +243,6 @@ export default function UserFormModal({
           </Col>
           <Col {...C4}>
             <Form.Item name="pyCode" label="拼音码" style={itemMb}>
-              {/* 回显库中值(小写);清空+保存 = 按当前姓名重算;手填 = 原样保存 */}
               <Input
                 placeholder="留空保存后按姓名自动生成;可手填覆盖"
                 maxLength={32}
@@ -308,8 +290,13 @@ export default function UserFormModal({
           </Col>
           <Col {...C4}>
             <Form.Item name="education" label="学历" style={itemMb}>
-              {/* 【遗留#2】存字典 code,DictSelect 类型编码确认后替换 */}
-              <Input placeholder="选填(字典项待接入)" maxLength={64} />
+              {/* ★遗留#2 已落地:字典下拉(PT0.2.15,平台标准);提交 value;平台项带「（标准）」后缀;
+                  本地过滤 label/pinyin;历史自由文本存量值无匹配 → 原样回显 */}
+              <DictSelect
+                dictCode={USER_DICT.education}
+                placeholder="选填"
+                allowClear
+              />
             </Form.Item>
           </Col>
           <Col {...C4}>
@@ -344,9 +331,13 @@ export default function UserFormModal({
         <Section title="执业信息" />
         <Row gutter={12}>
           <Col {...C4}>
-            <Form.Item name="post" label="岗位/职称" style={itemMb}>
-              {/* 【遗留#2】字典 code */}
-              <Input placeholder="选填(字典项待接入)" maxLength={64} />
+            <Form.Item name="post" label="岗位" style={itemMb}>
+              {/* ★遗留#2 已落地:字典下拉(PT0.2.1);label 与列表「岗位」列名对齐 */}
+              <DictSelect
+                dictCode={USER_DICT.post}
+                placeholder="选填"
+                allowClear
+              />
             </Form.Item>
           </Col>
           <Col {...C4}>
@@ -355,23 +346,27 @@ export default function UserFormModal({
             </Form.Item>
           </Col>
           <Col {...C4}>
-            <Form.Item name="level" label="医师级别" style={itemMb}>
-              {/* 【遗留#2】字典 code */}
-              <Input placeholder="选填(字典项待接入)" maxLength={64} />
+            <Form.Item name="level" label="职称/级别" style={itemMb}>
+              {/* ★遗留#2 已落地:字典下拉(PT0.2.16 职称);label 与列表「职称/级别」列名一致 */}
+              <DictSelect
+                dictCode={USER_DICT.level}
+                placeholder="选填"
+                allowClear
+              />
             </Form.Item>
           </Col>
           <Col {...C4}>
             <Form.Item name="workNature" label="工作性质" style={itemMb}>
-              {/* 【遗留#2】字典 code;DDL 94 疑为 64 笔误,按可存 94(v2 §四结论沿用) */}
-              <Input placeholder="选填(字典项待接入)" maxLength={94} />
+              {/* 【待建】工作性质字典类型未建立(见 dictCodes.ts 待建清单),保持手输 */}
+              <Input placeholder="选填(字典类型待建立)" maxLength={94} />
             </Form.Item>
           </Col>
         </Row>
         <Row gutter={12}>
           <Col {...C4}>
             <Form.Item name="skill" label="擅长领域" style={itemMb}>
-              {/* 【遗留#2】疑似字典 code,待确认 */}
-              <Input placeholder="选填" maxLength={64} />
+              {/* 【待建】擅长领域字典类型未建立,保持手输 */}
+              <Input placeholder="选填(字典类型待建立)" maxLength={64} />
             </Form.Item>
           </Col>
           <Col {...C4}>
@@ -390,7 +385,7 @@ export default function UserFormModal({
           </Col>
         </Row>
 
-        {/* ── 麻精处方权(§四;end ≥ start 前端镜像 §五,后端仍兜底)── */}
+        {/* ── 麻精处方权(§四)── */}
         <Section title="麻精处方权" />
         <Row gutter={12}>
           <Col {...C4}>
@@ -442,11 +437,11 @@ export default function UserFormModal({
             </Form.Item>
           </Col>
         </Row>
-
         {isEdit && (
           <div style={{ color: '#999', fontSize: 12 }}>
             账号/机构不可修改;⚠️ 选填字段清空后保存不生效(后端 null
-            不更新);学历/岗位/级别等待字典项接入;拼音码清空保存后按姓名自动重算
+            不更新);学历/岗位/职称已接字典下拉,清空后保存将置空;
+            拼音码清空保存后按姓名自动重算
           </div>
         )}
       </Form>

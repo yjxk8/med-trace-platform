@@ -1,206 +1,488 @@
+/**
+ * 药品字典(列表页)—— 用户管理范式
+ * ★本轮调整(2026-11-26):
+ * ①满屏修复:补 .drug-table-fill 类名 + index.less 表体定高规则——
+ *   antd scroll.y 只是 max-height(行少塌陷),定高靠 less 把 body height 锁成 var(--ubody-h);
+ *   JS 侧 ResizeObserver 测量契约与用户管理完全同构
+ * ②批量启停:工具条停用/启用按钮升级为批量(选中均为"在用"→停用可用;均为"停用"→启用可用;
+ *   混合状态双禁用,对齐用户管理 canLock/canUnlock 口径);接口 batchSetDrugUseStatus
+ *   部分成功模式(成功/失败计数+failList),后端未实现前调用报错属预期
+ * ③字典编码按 mdm_dict_type.csv 定版(见 dictCodes.ts):单位列 G10/G21 存量 value
+ *   翻译后显示名称;剂型接 PT0.2.11
+ * 红线不变:作废=软删;停用=选药下拉不再出现——确认文案沿用原文;机构数据域/⑬清选中/
+ * ⑱单击勾选双击编辑/⑯像素列宽/⑰20行每页/⑲表体定高
+ */
+import {
+  CheckCircleOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  ReloadOutlined,
+  StopOutlined,
+} from '@ant-design/icons';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
-import { App, Button, Form, Input, Popconfirm } from 'antd';
-import { useRef, useState } from 'react';
+import { App, Button, Empty, Input, Modal, Select, Tag } from 'antd';
+import type { CSSProperties, Key, MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import FillTable from '@/components/FillTable';
 import PageFill from '@/components/PageFill';
+import { useDict } from '@/hooks/useDict';
 import type { DrugInfosItem } from '@/services/drugInfos';
 import {
+  batchSetDrugUseStatus,
   pageDrugInfos,
-  setDrugUseStatus,
   voidDrug,
 } from '@/services/drugInfos';
+import { useOrgId } from '@/utils/orgContext';
+import { DRUG_DICT } from './dictCodes';
 import SaveForm from './SaveForm';
+import './index.less'; // ★①满屏修复:表体定高规则(.drug-table-fill .ant-table-body height)
 
-const MI_ID = 12; // TODO: 接入租户上下文后替换
+/** 表头+分页+边距扣减常数(⑲ 微调口诀:分页被裁→调大;下方见缝→调小) */
+const TABLE_CHROME = 96;
 
-const DrugInfosPage: React.FC = () => {
+export default function DrugInfosPage() {
   const { message } = App.useApp();
-  const actionRef = useRef<ActionType>();
-  const [filterForm] = Form.useForm();
-  const [filters, setFilters] = useState<Record<string, any>>({});
+
+  // ===== 机构数据域(响应式):药品为机构级数据 =====
+  const orgId = useOrgId();
+  const miId = orgId != null && Number(orgId) > 0 ? Number(orgId) : null;
+  const miIdRef = useRef<number | null>(miId);
+  miIdRef.current = miId;
+  const actionRef = useRef<ActionType | undefined>(undefined);
+
+  // ===== ★字典翻译(剂型/单位存字典 code;batchTranslate 一次拉全量本地匹配,坑#9)=====
+  const { batchTranslate } = useDict();
+  const [dosageLabels, setDosageLabels] = useState<Record<string, string>>({});
+  const [unitLabels, setUnitLabels] = useState<Record<string, string>>({});
+  useEffect(() => {
+    // 失败静默:列显示原始 code,不阻断页面
+    batchTranslate(DRUG_DICT.dosageForm)
+      .then(setDosageLabels)
+      .catch(() => {});
+    batchTranslate(DRUG_DICT.unit)
+      .then(setUnitLabels)
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ===== ⑲表体定高测量契约(与用户管理同构;高度喂给 --ubody-h + scroll.y)=====
+  const [tableBodyHeight, setTableBodyHeight] = useState(360);
+  const tableFillRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = tableFillRef.current;
+    if (!el) return;
+    const calc = () => {
+      const byParent = el.clientHeight - TABLE_CHROME;
+      const byViewport = window.innerHeight - 190;
+      setTableBodyHeight(Math.max(200, Math.min(byParent, byViewport)));
+    };
+    calc();
+    const ro = new ResizeObserver(calc);
+    ro.observe(el);
+    window.addEventListener('resize', calc);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', calc);
+    };
+  }, []);
+  const tableFillStyle = {
+    flex: 1,
+    minHeight: 0,
+    height: '100%',
+    position: 'relative',
+    overflow: 'hidden',
+    '--ubody-h': `${tableBodyHeight}px`,
+  } as CSSProperties;
+
+  // ===== 筛选态(state 控 UI,filterRef 供 request 读取)=====
+  const [stdCode, setStdCode] = useState('');
+  const [keyword, setKeyword] = useState('');
+  const [status, setStatus] = useState<string | undefined>(undefined);
+  const filterRef = useRef<{
+    phamStdCode?: string;
+    keyword?: string;
+    drugUseStatus?: string;
+  }>({});
+  const doSearch = () => {
+    filterRef.current = {
+      phamStdCode: stdCode.trim() || undefined,
+      keyword: keyword.trim() || undefined,
+      // ⚠️ drugUseStatus 服务端过滤需列表接口支持【待确认】;不支持时删本行+状态 Select
+      drugUseStatus: status,
+    };
+    actionRef.current?.reloadAndRest?.();
+  };
+  const doReset = () => {
+    setStdCode('');
+    setKeyword('');
+    setStatus(undefined);
+    filterRef.current = {};
+    actionRef.current?.reloadAndRest?.();
+  };
+
+  // ===== 行选择(⑬任何 request 清空;⑱单击行切换/双击编辑)=====
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [selectedRows, setSelectedRows] = useState<DrugInfosItem[]>([]);
+  const clearSelection = () => {
+    setSelectedKeys([]);
+    setSelectedRows([]);
+  };
+  const rowSelection = {
+    selectedRowKeys: selectedKeys,
+    columnWidth: 32,
+    onChange: (keys: readonly Key[], rows: readonly DrugInfosItem[]) => {
+      setSelectedKeys(keys.map(String));
+      setSelectedRows([...rows]);
+    },
+  };
+  const toggleRow = (r: DrugInfosItem) => {
+    const key = String(r.id);
+    setSelectedKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    );
+    setSelectedRows((prev) =>
+      prev.some((x) => String(x.id) === key)
+        ? prev.filter((x) => String(x.id) !== key)
+        : [...prev, r],
+    );
+  };
+  const onRow = (r: DrugInfosItem) => ({
+    onClick: (e: ReactMouseEvent<HTMLElement>) => {
+      const el = e.target as HTMLElement;
+      if (el.closest('.ant-table-selection-column')) return;
+      toggleRow(r);
+    },
+    onDoubleClick: () => {
+      openEdit(r);
+    },
+  });
+
+  // ===== 机构切换响应(保险通道)=====
+  const prevMiRef = useRef<number | null>(miId);
+  useEffect(() => {
+    if (prevMiRef.current === miId) return;
+    prevMiRef.current = miId;
+    if (miId == null) return;
+    setStdCode('');
+    setKeyword('');
+    setStatus(undefined);
+    filterRef.current = {};
+    clearSelection();
+    actionRef.current?.reloadAndRest?.();
+  }, [miId]);
+
+  // ===== 编辑弹窗(编辑-only)=====
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-
-  const search = () => {
-    setFilters(filterForm.getFieldsValue());
+  const openEdit = (r: DrugInfosItem) => {
+    if (miId == null) return;
+    setEditingId(r.id);
+    setFormOpen(true);
   };
 
-  const handleUseStatus = async (row: DrugInfosItem, status: 0 | 1) => {
-    try {
-      await setDrugUseStatus(row.id, status);
-      message.success(status === 1 ? '已启用' : '已停用（选药下拉中不再出现）');
-      actionRef.current?.reload();
-    } catch (e: any) {
-      message.error(e?.message || '操作失败');
-    }
+  const handleVoid = (row: DrugInfosItem) => {
+    Modal.confirm({
+      title: `作废药品「${row.phamName ?? row.phamStdCode}」?`,
+      content: '作废后列表不再显示（软删，详情仍可见），确认作废？',
+      okText: '作废',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await voidDrug(row.id);
+          message.success('已作废');
+          clearSelection();
+          actionRef.current?.reload();
+        } catch (e) {
+          message.error((e as Error).message || '作废失败');
+          throw e;
+        }
+      },
+    });
   };
 
-  const handleVoid = async (row: DrugInfosItem) => {
-    try {
-      await voidDrug(row.id);
-      message.success('已作废');
-      actionRef.current?.reload();
-    } catch (e: any) {
-      message.error(e?.message || '作废失败');
-    }
+  // ===== ★②批量启停(部分成功模式;门控对齐用户管理 canLock/canUnlock 全同状态口径)=====
+  const n = selectedRows.length;
+  const canStop =
+    n > 0 &&
+    miId != null &&
+    selectedRows.every((r) => String(r.drugUseStatus) === '1');
+  const canStart =
+    n > 0 &&
+    miId != null &&
+    selectedRows.every((r) => String(r.drugUseStatus) !== '1');
+  const single = n === 1 ? selectedRows[0] : null;
+
+  const batchToggleStatus = (stop: boolean) => {
+    const rows = stop
+      ? selectedRows.filter((r) => String(r.drugUseStatus) === '1')
+      : selectedRows;
+    if (rows.length === 0) return;
+    const ids = rows.map((r) => Number(r.id));
+    Modal.confirm({
+      title: stop ? `停用 ${ids.length} 个药品?` : `启用 ${ids.length} 个药品?`,
+      content: stop
+        ? '停用后选药下拉中将不再出现这些药品，确认停用？'
+        : '启用后恢复在选药下拉中出现，确认启用？',
+      okText: stop ? '停用' : '启用',
+      okButtonProps: stop ? { danger: true } : undefined,
+      onOk: async () => {
+        try {
+          const res = await batchSetDrugUseStatus({
+            drugIds: ids,
+            drugUseStatus: stop ? 0 : 1,
+          });
+          // 部分成功:失败条目逐条给原因(首条),完整明细后端可扩展结果弹窗
+          if (res && res.failCount > 0) {
+            const first = res.failList?.[0]?.reason;
+            message.warning(
+              `成功 ${res.successCount} 条,失败 ${res.failCount} 条${first ? `:${first}` : ''}`,
+            );
+          } else {
+            message.success(
+              res?.message || (stop ? '已批量停用' : '已批量启用'),
+            );
+          }
+          clearSelection();
+          actionRef.current?.reload();
+        } catch (e) {
+          message.error((e as Error).message || '批量操作失败');
+          throw e;
+        }
+      },
+    });
   };
 
+  // ===== 列定义(⑯像素宽;剂型/单位已接字典翻译)=====
   const columns: ProColumns<DrugInfosItem>[] = [
-    { title: '药品编码', dataIndex: 'phamStdCode', width: 140, copyable: true },
-    { title: '药品名称', dataIndex: 'phamName', width: 200, ellipsis: true },
-    { title: '规格', dataIndex: 'phamSpec', width: 120, ellipsis: true },
-    { title: '剂型', dataIndex: 'dosageForm', width: 100 },
-    { title: '单位', dataIndex: 'phamUnit', width: 70 },
-    { title: '价格', dataIndex: 'retailPrice', width: 70 },
+    {
+      title: '药品编码',
+      dataIndex: 'phamStdCode',
+      width: 170,
+      align: 'center',
+      copyable: true,
+      ellipsis: true,
+      render: (_, r) => r.phamStdCode || '-',
+    },
+    {
+      title: '药品名称',
+      dataIndex: 'phamName',
+      width: 240,
+      align: 'center',
+      ellipsis: true,
+      render: (_, r) => r.phamName || '-',
+    },
+    {
+      title: '规格',
+      dataIndex: 'phamSpec',
+      width: 160,
+      align: 'center',
+      ellipsis: true,
+      render: (_, r) => r.phamSpec || '-',
+    },
+    {
+      title: '剂型',
+      dataIndex: 'dosageForm',
+      width: 120,
+      align: 'center',
+      ellipsis: true,
+      // ★字典翻译(PT0.2.11);历史自由文本/未命中 → 原样回显
+      render: (_, r) =>
+        r.dosageForm
+          ? (dosageLabels[String(r.dosageForm)] ?? r.dosageForm)
+          : '-',
+    },
+    {
+      title: '单位',
+      dataIndex: 'phamUnit',
+      width: 100,
+      align: 'center',
+      ellipsis: true,
+      // ★字典翻译(PT0.2.23):存量 value G10/G21 → 名称
+      render: (_, r) =>
+        r.phamUnit ? (unitLabels[String(r.phamUnit)] ?? r.phamUnit) : '-',
+    },
+    {
+      title: '价格',
+      dataIndex: 'retailPrice',
+      width: 100,
+      align: 'center',
+      render: (_, r) =>
+        r.retailPrice != null && r.retailPrice !== '' ? r.retailPrice : '-',
+    },
     {
       title: '状态',
       dataIndex: 'drugUseStatus',
-      width: 80,
-      valueType: 'select',
-      fieldProps: {
-        options: [
-          { value: 1, label: '在用' },
-          { value: 0, label: '停用' },
-        ],
-      },
-      renderText: (v) => (v === 1 ? '在用' : '停用'),
-    },
-    {
-      title: '操作',
-      valueType: 'option',
-      width: 160,
-      fixed: 'right',
-      render: (_, record) => [
-        <a
-          key="edit"
-          onClick={() => {
-            setEditingId(record.id);
-            setFormOpen(true);
-          }}
-        >
-          编辑
-        </a>,
-        record.drugUseStatus === 1 ? (
-          <Popconfirm
-            key="stop"
-            title="停用后选药下拉中将不再出现该药品，确认停用？"
-            onConfirm={() => handleUseStatus(record, 0)}
-          >
-            <a>停用</a>
-          </Popconfirm>
-        ) : (
-          <a key="start" onClick={() => handleUseStatus(record, 1)}>
-            启用
-          </a>
-        ),
-        <Popconfirm
-          key="void"
-          title="作废后列表不再显示（软删，详情仍可见），确认作废？"
-          onConfirm={() => handleVoid(record)}
-        >
-          <a style={{ color: '#ff4d4f' }}>作废</a>
-        </Popconfirm>,
-      ],
+      width: 100,
+      align: 'center',
+      render: (_, r) => (
+        <Tag color={String(r.drugUseStatus) === '1' ? 'green' : 'default'}>
+          {String(r.drugUseStatus) === '1' ? '在用' : '停用'}
+        </Tag>
+      ),
     },
   ];
 
   return (
     <PageFill>
-      {/* ===== 筛选栏卡片：仅编码 + 药品名称 ===== */}
-      <div
-        style={{
-          background: '#fff',
-          borderRadius: 8,
-          padding: '10px 16px',
-          flexShrink: 0,
-        }}
-      >
-        <Form form={filterForm} layout="inline" onFinish={search}>
-          <Form.Item name="phamStdCode">
-            <Input
-              placeholder="药品编码"
-              allowClear
-              style={{ width: 220 }}
-              onPressEnter={search}
-            />
-          </Form.Item>
-          <Form.Item name="keyword">
-            <Input
-              placeholder="药品名称"
-              allowClear
-              style={{ width: 220 }}
-              onPressEnter={search}
-            />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit">
-              查询
-            </Button>
-          </Form.Item>
-          <Form.Item>
-            <Button
-              onClick={() => {
-                filterForm.resetFields();
-                setFilters({});
-              }}
-            >
-              重置
-            </Button>
-          </Form.Item>
-        </Form>
-      </div>
-
-      {/* ===== 表格卡片：占满剩余高度，表体内部滚动，分页固定 ===== */}
       <div
         style={{
           flex: 1,
           minHeight: 0,
+          height: '100%',
+          overflow: 'hidden',
           background: '#fff',
           borderRadius: 8,
-          padding: '2px 16px 4px',
+          padding: '12px 16px 8px',
           display: 'flex',
           flexDirection: 'column',
         }}
       >
-        <FillTable
-          pro
-          reservedHeight={76}
-          headerTitle="药品字典"
-          rowKey="id"
-          actionRef={actionRef}
-          columns={columns}
-          search={false} // 内置查询关闭，用上面的自定义筛选栏
-          scroll={{ x: 1200 }}
-          params={filters} // filters 变化自动触发重新请求
-          options={false}
-          cardBordered={false}
-          request={async (p) => {
-            try {
-              const { current, pageSize, ...rest } = p; // rest = phamStdCode/keyword（来自 params）
-              const res = await pageDrugInfos({
-                page: current ?? 1,
-                size: pageSize ?? 10,
-                miId: MI_ID,
-                ...rest,
-              });
-              return { data: res.records, total: res.total, success: true };
-            } catch (e: any) {
-              message.error(e?.message || '加载失败');
-              return { data: [], total: 0, success: false };
-            }
-          }}
-          pagination={{
-            defaultPageSize: 10,
-            showSizeChanger: true,
-          }}
-        />
+        {/* 筛选区 */}
+        <div
+          style={{ display: 'flex', gap: 8, marginBottom: 8, flexShrink: 0 }}
+        >
+          <Input
+            allowClear
+            style={{ width: 200 }}
+            placeholder="药品编码"
+            value={stdCode}
+            onChange={(e) => setStdCode(e.target.value)}
+            onPressEnter={doSearch}
+          />
+          <Input
+            allowClear
+            style={{ width: 200 }}
+            placeholder="药品名称"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            onPressEnter={doSearch}
+          />
+          <Select
+            allowClear
+            style={{ width: 110 }}
+            placeholder="状态"
+            value={status}
+            onChange={(v) => setStatus(v)}
+            options={[
+              { value: '1', label: '在用' },
+              { value: '0', label: '停用' },
+            ]}
+          />
+          <Button type="primary" onClick={doSearch}>
+            查询
+          </Button>
+          <Button onClick={doReset}>重置</Button>
+        </div>
+
+        {/* 工具条:★②停用/启用升级为批量(选中 1 项走同接口亦可) */}
+        <div className="drug-toolbar">
+          <span className="drug-toolbar__title">药品列表</span>
+          <span className="drug-toolbar__divider" />
+          <Button
+            type="text"
+            icon={<EditOutlined />}
+            title="编辑（选中 1 项，或双击行）"
+            disabled={single == null || miId == null}
+            onClick={() => {
+              if (single) openEdit(single);
+            }}
+          />
+          <Button
+            type="text"
+            icon={<StopOutlined />}
+            title="批量停用（选中均为“在用”时可用）"
+            disabled={!canStop}
+            onClick={() => batchToggleStatus(true)}
+          />
+          <Button
+            type="text"
+            icon={<CheckCircleOutlined />}
+            title="批量启用（选中均为“停用”时可用）"
+            disabled={!canStart}
+            onClick={() => batchToggleStatus(false)}
+          />
+          <span className="drug-toolbar__divider" />
+          <Button
+            type="text"
+            danger
+            icon={<DeleteOutlined />}
+            title="作废（选中 1 项，软删）"
+            disabled={single == null || miId == null}
+            onClick={() => {
+              if (single) handleVoid(single);
+            }}
+          />
+          <Button
+            type="text"
+            icon={<ReloadOutlined />}
+            title="刷新"
+            onClick={() => actionRef.current?.reload()}
+          />
+          {selectedKeys.length > 0 && (
+            <span className="drug-toolbar__selchip">
+              已选 {selectedKeys.length} 项<a onClick={clearSelection}>清空</a>
+            </span>
+          )}
+        </div>
+
+        {/* ⑲★①表格填充区:--ubody-h 由本处写入,index.less 锁 body 高度(满屏修复核心) */}
+        <div
+          ref={tableFillRef}
+          className="drug-table-fill"
+          style={tableFillStyle}
+        >
+          <FillTable
+            pro
+            rowKey={(r: DrugInfosItem) => String(r.id)}
+            actionRef={actionRef}
+            columns={columns}
+            rowSelection={rowSelection}
+            onRow={onRow}
+            tableAlertRender={false}
+            tableAlertOptionRender={false}
+            search={false}
+            options={false}
+            cardBordered={false}
+            tableLayout="fixed"
+            scroll={{ x: 990, y: tableBodyHeight }}
+            pagination={{ pageSize: 20, showSizeChanger: false }}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无药品"
+                />
+              ),
+            }}
+            request={async (params: {
+              current?: number;
+              pageSize?: number;
+            }) => {
+              clearSelection(); // ⑬任何重查清空选中
+              const cur = miIdRef.current;
+              if (cur == null) {
+                return { data: [], total: 0, success: false };
+              }
+              try {
+                const res = await pageDrugInfos({
+                  page: params.current ?? 1,
+                  size: params.pageSize ?? 20,
+                  miId: cur,
+                  ...filterRef.current,
+                });
+                return { data: res.records, total: res.total, success: true };
+              } catch (e) {
+                message.error((e as Error).message || '加载失败');
+                return { data: [], total: 0, success: false };
+              }
+            }}
+          />
+        </div>
       </div>
 
-      {/* ===== 编辑弹窗（无新增入口，编辑从行操作进入） ===== */}
       <SaveForm
         open={formOpen}
         editingId={editingId}
-        miId={MI_ID}
+        miId={miId}
         onClose={() => setFormOpen(false)}
         onSuccess={() => {
           setFormOpen(false);
@@ -209,6 +491,4 @@ const DrugInfosPage: React.FC = () => {
       />
     </PageFill>
   );
-};
-
-export default DrugInfosPage;
+}

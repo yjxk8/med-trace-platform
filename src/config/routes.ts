@@ -27,6 +27,7 @@ export const routes: RouteItem[] = [
     icon: 'HomeOutlined',
     component: './Welcome',
   },
+
   // ===== 药事管理 =====
   {
     name: '药事管理',
@@ -53,6 +54,7 @@ export const routes: RouteItem[] = [
       },
     ],
   },
+
   // ===== 业务办理 =====
   {
     name: '业务办理',
@@ -79,6 +81,7 @@ export const routes: RouteItem[] = [
       },
     ],
   },
+
   // ===== 三级药库 =====
   {
     name: '三级药库',
@@ -123,6 +126,7 @@ export const routes: RouteItem[] = [
       },
     ],
   },
+
   // ===== 溯源与统计 =====
   {
     name: '溯源与统计',
@@ -143,6 +147,7 @@ export const routes: RouteItem[] = [
       },
     ],
   },
+
   // ===== 系统管理 =====
   {
     name: '系统管理',
@@ -195,6 +200,9 @@ export const routes: RouteItem[] = [
         icon: 'TeamOutlined',
         component: './User',
       },
+      // ★字典管理:保留旧版"左类型右数据"合并页交互形态(用户确认不拆双页);
+      // path 小写 /dict 与后端动态菜单同轨(app.tsx patchClientRoutes 字符串精确比对去重,
+      // 真实页面由静态路由承担);component:'./Dict' 与 COMPONENT_MAP.Dict 同源
       {
         path: '/dict',
         name: '字典管理',
