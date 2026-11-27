@@ -1,7 +1,40 @@
 import type { Request, Response } from 'express';
-import { waitTime, defaultUser } from './utils';
 
 const { ANT_DESIGN_PRO_ONLY_DO_NOT_USE_IN_YOUR_PRODUCTION } = process.env;
+
+// Mock utilities
+const waitTime = (time: number = 1000) => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve(true);
+    }, time);
+  });
+};
+
+const defaultUser = {
+  name: 'Admin',
+  avatar: 'https://gw.alipayobjects.com/zos/antfincdn/XAosXuNZyF/BiazfanxmamKDoVyjB3ZY.png',
+  userid: '00000000',
+  signature: '海纳百川，有容乃大',
+  email: 'antdesign@example.com',
+  title: '交互专家',
+  group: '科技',
+  tags: [
+    { label: '很好', value: 'good' },
+    { label: '正面', value: 'positive' },
+  ],
+  notifyCount: 12,
+  unreadCount: 11,
+  country: '中国',
+  address: 'xx省xx市xx区xx道路xx号',
+  geographic: {
+    province: 'xx省',
+    city: 'xx市',
+  },
+  readStatus: 24,
+  company: '蚂蚁金服',
+  position: '交互专家',
+} as const;
 
 /**
  * 当前用户的权限，如果为空代表没登录
